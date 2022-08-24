@@ -24,6 +24,8 @@ This repository contains everything necessary to process image data, from focus 
 
 ### fstacker usage
 
+note that `use_gpu = True` isn't always faster than using the CPU for focus stacking. It is unclear what determines the speed.
+
 1. to use fstacker as a script, set `CLI = TRUE` in `main()` in `fstacker.py` and set the constants. Then, run the file.
 2. to use the command line interface, set `CLI = TRUE` in `main()` in `fstacker.py`. Navigate to the directory `fstacker.py` is in, activate the conda environment if necessary, and run `python -m fstacker --help` to see all the flags and how to set them.
 
