@@ -11,16 +11,17 @@ from skimage.morphology import disk
 from skimage.registration import phase_cross_correlation
 from skimage.transform import warp, AffineTransform
 import os
-debugging = False
+import xarray as xr
+debugging = True
 
 def main():
-    
     CLI = False     # set to true for CLI, if false, the following constants are used:
-    use_gpu = True  # use GPU accelerated focus stacking
+    save_zarr = True
+    use_gpu = False  # use GPU accelerated focus stacking; seems to be faster only when working with local?
     key = '/home/prakashlab/Documents/fstack/codex-20220324-keys.json'
     gcs_project = 'soe-octopi'
     src = "gs://octopi-codex-data"
-    dst = "gs://octopi-codex-data-processing/TEST_1HDcVekx4mrtl0JztCXLn9xN6GOak4AU" #"./test"
+    dst = './ztest'#"gs://octopi-codex-data-processing/TEST_1HDcVekx4mrtl0JztCXLn9xN6GOak4AU" #"./test"
     exp = ["20220601_20x_75mm"]
     cha = ["Fluorescence_405_nm_Ex", "Fluorescence_488_nm_Ex", "Fluorescence_561_nm_Ex", "Fluorescence_638_nm_Ex"]
     typ = "bmp"
@@ -85,9 +86,11 @@ def main():
     stack_args.add_argument('--sth',   default=13,  type=int,   help='blending parameter')
     # misc
     parser.add_argument('--verbose', action='store_true', help='show information about running and settings')
+    parser.add_argument('--save_zarr', action='store_true', help='save to .zarr file instead of nested image folders')
     args = parser.parse_args()
 
     if not CLI:
+        args.save_zarr = save_zarr
         args.use_gpu = use_gpu
         args.key = key
         args.gcs_project = gcs_project
@@ -116,10 +119,10 @@ def main():
         args.sth   = sth
         args.verbose = verbose
     
-    perform_stack(colors, args.use_gpu, args.key, args.gcs_project, args.src, args.exp, args.cha, args.dst, args.typ, args.imin, args.imax, args.jmin, args.jmax, args.kmin, args.kmax, args.cmin, args.cmax, args.crop_start, args.crop_end, args.remove_background, args.subtract_background, args.invert_contrast, args.shift_registration, args.use_color, args.WSize, args.alpha, args.sth, args.verbose)
+    perform_stack(save_zarr, colors, args.use_gpu, args.key, args.gcs_project, args.src, args.exp, args.cha, args.dst, args.typ, args.imin, args.imax, args.jmin, args.jmax, args.kmin, args.kmax, args.cmin, args.cmax, args.crop_start, args.crop_end, args.remove_background, args.subtract_background, args.invert_contrast, args.shift_registration, args.use_color, args.WSize, args.alpha, args.sth, args.verbose)
     return
     
-def perform_stack(colors, use_gpu, key, gcs_project, src, exp, cha, dst, typ, imin, imax, jmin, jmax, kmin, kmax, cmin, cmax, crop_start, crop_end, remove_background, subtract_background, invert_contrast, shift_registration, use_color, WSize, alpha, sth, verbose):
+def perform_stack(save_zarr, colors, use_gpu, key, gcs_project, src, exp, cha, dst, typ, imin, imax, jmin, jmax, kmin, kmax, cmin, cmax, crop_start, crop_end, remove_background, subtract_background, invert_contrast, shift_registration, use_color, WSize, alpha, sth, verbose):
     a = crop_end - crop_start
     # Initialize arguments
     error = 0
@@ -179,8 +182,12 @@ def perform_stack(colors, use_gpu, key, gcs_project, src, exp, cha, dst, typ, im
     # pre-allocate arrays
     if use_color:
         I_zs = np.zeros((kmax-kmin + 1,a,a,3))
+        if save_zarr:
+            I_ij = np.zeros((a,a,len(cha),cmax - cmin + 1, 3)) # x, y, channel, cycle, color
     else:
         I_zs = np.zeros((kmax-kmin + 1,a,a))
+        if save_zarr:
+            I_ij = np.zeros((a,a,len(cha),cmax - cmin + 1)) # x, y, channel, cycle
     # perform fstack for each experiment and for each channel and for each i,j
     for exp_i in exp:
         # load index.csv for each top-level experiment index
@@ -195,7 +202,7 @@ def perform_stack(colors, use_gpu, key, gcs_project, src, exp, cha, dst, typ, im
                     df = pd.read_csv(f)
         except:
             print(path + " cannot be opened")
-            break # exit this loop
+            continue # exit this loop
         if verbose:
             print(path + " opened")
             n = df.shape[0] # n is the number of cycles
@@ -204,10 +211,12 @@ def perform_stack(colors, use_gpu, key, gcs_project, src, exp, cha, dst, typ, im
         
         for i, j in product(range(imin, imax+1), range(jmin, jmax+1)):
             if debugging and (i > imin + 2 or j > jmin + 2):
-                break
+                continue
+            if save_zarr:
+                dest = dst + "/" + exp_i + "/" + str(i) + "/" + str(j)
             for c in range(cmin, cmax+1):
                 if debugging and c >= cmin+4:
-                    break
+                    continue
                 id = df.loc[c, 'Acquisition_ID']
                 if verbose:
                     print(id)  
@@ -275,19 +284,36 @@ def perform_stack(colors, use_gpu, key, gcs_project, src, exp, cha, dst, typ, im
                             I = 255 - I
                     
                     # save images 
-                    fname = str(l) + '_' + channel + '.png'
-                    savepath = dst + '/' + exp_i + '/' + str(i) + '/' + str(j) + '/' + str(c) + '/'
-                    if dst[0:5] == 'gs://':
-                        cv2.imwrite(fname, I)
-                        fs.put(fname, savepath+fname)
-                        os.remove(fname)
+                    if save_zarr:
+                        if use_color:
+                            I_ij[:,:, l, c, :] = I
+                        else:
+                            I_ij[:,:, l, c] = I
                     else:
-                        try:
-                            os.makedirs(savepath)
-                        except:
-                            pass
-                        cv2.imwrite(savepath+fname, I)
+                        fname = str(l) + '_' + channel + '.png'
+                        savepath = dst + '/' + exp_i + '/' + str(i) + '/' + str(j) + '/' + str(c) + '/'
+                        if dst[0:5] == 'gs://':
+                            cv2.imwrite(fname, I)
+                            fs.put(fname, savepath+fname)
+                            os.remove(fname)
+                        else:
+                            os.makedirs(savepath, exist_ok=True)
+                            cv2.imwrite(savepath+fname, I)
+            # write I_ij to zarr
+            if save_zarr:
+                os.makedirs(dest, exist_ok=True)
+                data = xr.DataArray(I_ij,dims=['x','y','c','t'])
+                data = data.transpose('t', 'c', 'x', 'y')
+                data = (data).astype('uint8')
+                ds = xr.Dataset({'images':data})
+                dest += '/'+ exp_i + ".zarr"
+                ds.to_zarr(dest, mode='w')
+                print("zarr'd")
 
+            # move the zarr to remote
+            if save_zarr and dst[0:5] == 'gs://':
+                fs.put(dest, dst+'/'+exp_i + '/' + str(i) + '/' + str(j) + '/' + str(c) + '/'+ exp_i + ".zarr")
+                os.remove(dest)
 
 def imread_gcsfs(fs,file_path):
     '''
