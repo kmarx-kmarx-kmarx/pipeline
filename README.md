@@ -2,6 +2,8 @@
 
 This repository contains everything necessary to process image data, from focus stacking to basic analysis.
 
+note: this code has only been tested with single channel monochromatic images.
+
 ## Repo Contents
 
 ### focus stack

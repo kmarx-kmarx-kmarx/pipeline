@@ -4,6 +4,7 @@ from cellpose import models, io
 import glob
 import os
 import gcsfs
+from itertools import product
 import imageio
 import xarray as xr
 
@@ -50,63 +51,74 @@ def run_seg(is_zarr, root_dir, exp_id, channel, cpmodel, channels, key, use_gpu,
             allpaths = [p for p in glob.iglob(path, recursive=True)]
         allpaths = list(dict.fromkeys(allpaths))
         allpaths.sort()
-        for i in allpaths:
-            print(i)
         # get the shape of a zarr
+        test = xr.open_zarr(allpaths[0])
+        t = test.dims['t']
+        c = test.dims['c']
         imgpaths = []
+        imgs = []
+        for zpath in allpaths:
+            data = xr.open_zarr(zpath).to_array()
+            for ti in range(t):
+                basepath = zpath.rsplit('/', 1)[0]
+                # make fictitious image paths to give to cellpose
+                imgpaths.append(basepath + '/' + str(ti) + '/' + str(channel) + '.png')
+                imgs.append(np.array(data[0, ti, channel, :, :]))
+    
+    else:
+        path = root_dir + exp_id + "/**/**/**/" + str(channel) + '**.png'
+        print(path)
+        if root_remote:
+            allpaths = [p for p in fs.glob(path, recursive=True)]
+        else:
+            allpaths = [p for p in glob.iglob(path, recursive=True)]
+        # remove duplicates
+        imgpaths = list(dict.fromkeys(allpaths))
+        imgpaths.sort()
+        imgpaths = np.array(imgpaths)
+        print("Reading images")
+        # load images
+        if root_remote:
+            imgs = [imread_gcsfs(fs, path) for path in imgpaths]
+        else:
+            imgs = [io.imread(path) for path in imgpaths]
 
+    print("Starting cellpose")
+    # start cellpose
+    model = models.CellposeModel(gpu=use_gpu, pretrained_model=cpmodel)
+    print("Starting segmentation")
 
-        
-    # else:
-    #     path = root_dir + exp_id + "/**/**/**/" + str(channel) + '**.png'
-    #     print(path)
-    #     if root_remote:
-    #         allpaths = [p for p in fs.glob(path, recursive=True)]
-    #     else:
-    #         allpaths = [p for p in glob.iglob(path, recursive=True)]
-    #     # remove duplicates
-    #     imgpaths = list(dict.fromkeys(allpaths))
-    #     imgpaths.sort()
-    #     imgpaths = np.array(imgpaths)
-    #     print("Reading images")
-    #     # load images
-    #     if root_remote:
-    #         imgs = [imread_gcsfs(fs, path) for path in imgpaths]
-    #     else:
-    #         imgs = [io.imread(path) for path in imgpaths]
+    placeholder = "./placeholder.png"
 
-    # print("Starting cellpose")
-    # # start cellpose
-    # model = models.CellposeModel(gpu=use_gpu, pretrained_model=cpmodel)
-    # print("Starting segmentation")
+    print(str(len(imgs)) + " images to segment")
 
-    # placeholder = "./placeholder.png"
+    # segment one at a time - gpu bottleneck
+    for idx, im in enumerate(imgs):
+        print(idx)
+        imlist  = [im]
+        masks, flows, styles = model.eval(imlist, diameter=None, channels=channels)
+        diams = 0
+        if root_remote:
+            savepath = placeholder
+        else:
+            savepath = imgpaths[idx]
+        if is_zarr:
+            os.makedirs(savepath.rsplit('/', 1)[0], exist_ok=True)
+        print(savepath)
+        print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
+        # actually run the segmentation
+        io.masks_flows_to_seg(imlist, masks, flows, diams, [savepath], channels)
 
-    # print(str(len(imgs)) + " images to segment")
+        # move the .npy to remote if necessary
+        if root_remote:
+            # generate the local and remote path names
+            savepath = savepath.rsplit(".", 1)[0] + "_seg.npy"
+            rpath = imgpaths[idx].rsplit(".", 1)[0] + "_seg.npy"
+            fs.put(savepath, rpath)
+            os.remove(savepath)
 
-    # # segment one at a time - gpu bottleneck
-    # for idx, im in enumerate(imgs):
-    #     print(idx)
-    #     imlist  = [im]
-    #     masks, flows, styles = model.eval(imlist, diameter=None, channels=channels)
-    #     diams = 0
-    #     if root_remote:
-    #         savepath = placeholder
-    #     else:
-    #         savepath = imgpaths[idx]
-    #     # actually run the segmentation
-    #     io.masks_flows_to_seg(imlist, masks, flows, diams, [savepath], channels)
-
-    #     # move the .npy to remote if necessary
-    #     if root_remote:
-    #         # generate the local and remote path names
-    #         savepath = savepath.rsplit(".", 1)[0] + "_seg.npy"
-    #         rpath = imgpaths[idx].rsplit(".", 1)[0] + "_seg.npy"
-    #         fs.put(savepath, rpath)
-    #         os.remove(savepath)
-
-    # if model_remote:
-    #     os.remove(modelpath)
+    if model_remote:
+        os.remove(modelpath)
 
 def imread_gcsfs(fs,file_path):
     '''

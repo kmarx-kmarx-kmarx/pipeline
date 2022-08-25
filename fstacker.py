@@ -16,12 +16,12 @@ debugging = True
 
 def main():
     CLI = False     # set to true for CLI, if false, the following constants are used:
-    save_zarr = True
+    save_zarr = False
     use_gpu = False  # use GPU accelerated focus stacking; seems to be faster only when working with local?
     key = '/home/prakashlab/Documents/fstack/codex-20220324-keys.json'
     gcs_project = 'soe-octopi'
     src = "gs://octopi-codex-data"
-    dst = './ztest'#"gs://octopi-codex-data-processing/TEST_1HDcVekx4mrtl0JztCXLn9xN6GOak4AU" #"./test"
+    dst = './itest'#"gs://octopi-codex-data-processing/TEST_1HDcVekx4mrtl0JztCXLn9xN6GOak4AU" #"./test"
     exp = ["20220601_20x_75mm"]
     cha = ["Fluorescence_405_nm_Ex", "Fluorescence_488_nm_Ex", "Fluorescence_561_nm_Ex", "Fluorescence_638_nm_Ex"]
     typ = "bmp"
