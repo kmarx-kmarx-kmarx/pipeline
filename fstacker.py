@@ -11,18 +11,19 @@ from skimage.morphology import disk
 from skimage.registration import phase_cross_correlation
 from skimage.transform import warp, AffineTransform
 import os
+from natsort import natsorted
 debugging = False
 
 def main():
     
     CLI = False     # set to true for CLI, if false, the following constants are used:
     use_gpu = True  # use GPU accelerated focus stacking
-    prefix = "20x"  # if index.csv DNE, use prefix
+    prefix = "cycle"  # if index.csv DNE, use prefix
     key = '/home/prakashlab/Documents/fstack/codex-20220324-keys.json'
     gcs_project = 'soe-octopi'
-    src = "gs://octopi-codex-data"
-    dst = "./tstflat" #"gs://octopi-codex-data-processing/TEST_1HDcVekx4mrtl0JztCXLn9xN6GOak4AU" #"./test"
-    exp = ["20220601_20x_75mm"]
+    src = "/media/prakashlab/T7/20220823_20x_PBMC"
+    dst = "/home/prakashlab/Documents/newcodex" #"gs://octopi-codex-data-processing/TEST_1HDcVekx4mrtl0JztCXLn9xN6GOak4AU" #"./test"
+    exp = ["data for processing"]
     cha = ["Fluorescence_405_nm_Ex", "Fluorescence_488_nm_Ex", "Fluorescence_561_nm_Ex", "Fluorescence_638_nm_Ex"]
     typ = "bmp"
     colors = {'0':[255,255,255],'1':[255,200,0],'2':[30,200,30],'3':[0,0,255]} # BRG
@@ -32,13 +33,13 @@ def main():
     subtract_background = False
     use_color = False
     imin = 0    # view positions
-    imax = 4
+    imax = 19
     jmin = 0
-    jmax = 7
+    jmax = 19
     kmin = 0
     kmax = 0
-    cmin = 3
-    cmax = 9
+    cmin = 0
+    cmax = 14
     crop_start = 0 # crop settings
     crop_end = 3000
     WSize = 9     # Focus stacking params
@@ -197,7 +198,7 @@ def perform_stack(colors, prefix, use_gpu, key, gcs_project, src, exp, cha, dst,
         except:
             print(path + " cannot be opened")
              # exit this loop
-        if verbose:
+        if verbose and len(prefix)==0:
             print(path + " opened")
             n = df.shape[0] # n is the number of cycles
             print("n cycles = " + str(n))
@@ -205,9 +206,9 @@ def perform_stack(colors, prefix, use_gpu, key, gcs_project, src, exp, cha, dst,
                 print(df.loc[i, 'Acquisition_ID'])
         if len(prefix) > 0:
             if is_remote:
-                loc = [a.split('/')[-1] for a in fs.ls(src + '/' + exp_i) if a.split('/')[-1][0:len(prefix)] == prefix ]
+                loc = natsorted([a.split('/')[-1] for a in fs.ls(src + '/' + exp_i) if a.split('/')[-1][0:len(prefix)] == prefix ])
             else:  
-                loc = [a.split('/')[-1] for a in os.listdir(src + '/' + exp_i) if a.split('/')[-1][0:len(prefix)] == prefix ]
+                loc = natsorted([a.split('/')[-1] for a in os.listdir(src + '/' + exp_i) if a.split('/')[-1][0:len(prefix)] == prefix ])
             
         for i, j in product(range(imin, imax+1), range(jmin, jmax+1)):
             if debugging and (i > imin + 2 or j > jmin + 2):
@@ -245,12 +246,21 @@ def perform_stack(colors, prefix, use_gpu, key, gcs_project, src, exp, cha, dst,
                         except:
                             print("Data missing")
                             I = np.zeros((a,a))
+                        og_type = I.dtype
+                        if og_type == np.uint16:
+                            print("16 bit!")
+                            I /= 256
+                            I = np.uint8(I)
+                            print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
                         # crop the image
                         I = I[crop_start:crop_end,crop_start:crop_end]
                         if use_color:
                             I_zs[k,:,:,:] = I
                         else:
-                            I_zs[k,:,:] = I
+                            if I.shape[-1]==3:
+                                I_zs[k,:,:] = I[:,:,0]
+                            else:
+                                I_zs[k,:,:] = I
                     if (kmax+1-kmin) > 4:
                         I = fstack_images(I_zs, list(range(kmin, kmax+1)), verbose=verbose, WSize=WSize, alpha=alpha, sth=sth)
                     else:
@@ -263,9 +273,10 @@ def perform_stack(colors, prefix, use_gpu, key, gcs_project, src, exp, cha, dst,
                     if subtract_background:
                         I = I - np.amin(I)
                     
-                    # normalize
-                    I = I.astype('float')
-                    I = 255*I/np.amax(I)
+                    # # normalize
+                    # I = I.astype('float')
+                    # I = 255*I/np.amax(I)
+
                     # registration across channels
                     if shift_registration:
                         # take the first channel of the first cycle as reference

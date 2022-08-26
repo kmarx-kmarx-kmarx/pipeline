@@ -16,12 +16,12 @@ def main():
     # How many pixels around the mask to expand
     expansion = 7   
     # root_dir needs a trailing slash (i.e. /root/dir/)
-    root_dir = 'gs://octopi-codex-data-processing/TEST_1HDcVekx4mrtl0JztCXLn9xN6GOak4AU/' #"/home/prakashlab/Documents/kmarx/pipeline/test/" #'gs://octopi-codex-data-processing/TEST_1HDcVekx4mrtl0JztCXLn9xN6GOak4AU/'
-    exp_id   = "20220601_20x_75mm/"
+    root_dir = "/home/prakashlab/Documents/newcodex/"#'gs://octopi-codex-data-processing/TEST_1HDcVekx4mrtl0JztCXLn9xN6GOak4AU/' #"/home/prakashlab/Documents/kmarx/pipeline/test/" #'gs://octopi-codex-data-processing/TEST_1HDcVekx4mrtl0JztCXLn9xN6GOak4AU/'
+    exp_id   = "data for processing/"
     channel =  "Fluorescence_405_nm_Ex" # use only this channel as masks
     key = '/home/prakashlab/Documents/fstack/codex-20220324-keys.json'
     gcs_project = 'soe-octopi'
-    out = "gs://octopi-codex-data-processing/TEST_1HDcVekx4mrtl0JztCXLn9xN6GOak4AU/meanbright_" + str(expansion) + ".csv"
+    out = "/home/prakashlab/Documents/newcodex/meanbright_" + str(expansion) + ".csv"
     
     run_analysis(start_idx, end_idx, n_ch, expansion, root_dir, exp_id, channel, key, gcs_project, out)
 
