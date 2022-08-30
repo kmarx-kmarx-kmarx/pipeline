@@ -112,7 +112,9 @@ def run_seg(is_zarr, root_dir, exp_id, channel, zstack, cpmodel, channels, key, 
             rpath = imgpaths[idx].rsplit(".", 1)[0] + "_seg.npy"
             fs.put(savepath, rpath)
             os.remove(savepath)
-
+            
+        if is_zarr and root_remote:
+            os.remove(local)
     if model_remote:
         os.remove(modelpath)
 
