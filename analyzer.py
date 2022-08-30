@@ -7,8 +7,10 @@ import gcsfs
 import imageio
 import os
 from natsort import natsorted
+import xarray as xr
 
 def main():
+    is_zarr = True
     # Cycle indices are 0-12, we can choose a subset of the cycles to analyze
     start_idx = 0 #2
     end_idx   = 14 #11
@@ -25,9 +27,9 @@ def main():
     gcs_project = 'soe-octopi'
     out = "/media/prakashlab/T7/" + exp_id + "/meanbright_" + str(expansion) + ".csv"
     
-    run_analysis(start_idx, end_idx, n_ch, zstack, expansion, root_dir, exp_id, channel, key, gcs_project, out)
+    run_analysis(is_zarr, start_idx, end_idx, n_ch, zstack, expansion, root_dir, exp_id, channel, key, gcs_project, out)
 
-def run_analysis(start_idx, end_idx, n_ch, zstack, expansion, root_dir, exp_id, channel, key, gcs_project, out):
+def run_analysis(is_zarr, start_idx, end_idx, n_ch, zstack, expansion, root_dir, exp_id, channel, key, gcs_project, out):
     root_remote = False
     if root_dir[0:5] == 'gs://':
         root_remote = True
@@ -42,7 +44,10 @@ def run_analysis(start_idx, end_idx, n_ch, zstack, expansion, root_dir, exp_id, 
         fs = gcsfs.GCSFileSystem(project=gcs_project,token=key)
 
     print("Reading .npy paths")
-    path = root_dir + exp_id + "**/0/**_" + zstack + "_" + channel + '_seg.npy'
+    if is_zarr:
+        path = root_dir + exp_id + "**/**/**_seg.npy"
+    else:
+        path = root_dir + exp_id + "**/0/**_" + zstack + "_" + channel + '_seg.npy'
     print(path)
     if root_remote:
         allpaths = [p for p in fs.glob(path, recursive=True)]
@@ -55,8 +60,11 @@ def run_analysis(start_idx, end_idx, n_ch, zstack, expansion, root_dir, exp_id, 
     # only the first cycle is segmented - nothing more to do
 
     # repeat to get png paths
-    print("Reading .png paths")
-    path = root_dir + exp_id + "**/0/**_" + zstack  + '**.png'
+    print("Reading image paths")
+    if is_zarr:
+        path = root_dir + exp_id + "**/**/**.zarr"
+    else:
+        path = root_dir + exp_id + "**/0/**_" + zstack  + '**.png'
     print(path)
     if root_remote:
         allpaths = [p for p in fs.glob(path, recursive=True)]
@@ -66,11 +74,14 @@ def run_analysis(start_idx, end_idx, n_ch, zstack, expansion, root_dir, exp_id, 
     allpaths = list(dict.fromkeys(allpaths))
     allpaths.sort()
     allpaths = np.array(allpaths)
-    # remove images out of cycle bounds
-    all_cycles = natsorted(list(dict.fromkeys([i.split('/')[-3] for i in allpaths])))
-    target_cycles = all_cycles[start_idx:end_idx+1]
-    pngpaths = [p for p in allpaths if p.split('/')[-3] in target_cycles]
-    print(str(len(pngpaths)) + " images to analyze")
+    if is_zarr:
+        print(str(n_ch * len(allpaths) * (end_idx - start_idx + 1)) + " images to analyze")
+    else:
+        # remove images out of cycle bounds
+        all_cycles = natsorted(list(dict.fromkeys([i.split('/')[-3] for i in allpaths])))
+        target_cycles = all_cycles[start_idx:end_idx+1]
+        pngpaths = [p for p in allpaths if p.split('/')[-3] in target_cycles]
+        print(str(len(pngpaths)) + " images to analyze")
 
     # make a dataframe
     header = ['i', 'j', 'x', 'y', 'sz_msk', 'sz_nuc']
@@ -79,7 +90,7 @@ def run_analysis(start_idx, end_idx, n_ch, zstack, expansion, root_dir, exp_id, 
             header.append(str(cy) + "_" + str(ch))
     print("header: " + str(len(header)))
     # process one at a time
-    placeholder = "./placeholder_seg.npy"
+    placeholder = "./placeholder"
     print(str(len(npypaths)) + " masks")
     for idx, path in enumerate(npypaths):
         # make a fresh df
@@ -87,27 +98,38 @@ def run_analysis(start_idx, end_idx, n_ch, zstack, expansion, root_dir, exp_id, 
         #   1 row for each cell
         #   1 column for each cycle x channel
         print("Loading mask " + path)
-        splitpath = path.split("/")
-        cy = splitpath[-3]
-        splitpath = splitpath[-1].split('_')
-        ch = int(splitpath[4])
-        j  = int(splitpath[1])
-        i  = int(splitpath[0])
-        # only get images 
-        pattern = "\/" + str(i) + "_" + str(j) + "_" + zstack + ".*\.png"
-        imgpath = [p for p in pngpaths if re.search(pattern, p)]
-        imgpath = natsorted(imgpath)
-        print(str(len(imgpath)) + " images in this (i,j)")
-        # preload each image
-        if root_remote:
-            imgs = np.array([imread_gcsfs(fs, path) for path in imgpath])
+        if is_zarr:
+            zpath = path.rsplit('_', 1)[0] + '.zarr'
+            local = zpath
+            if root_remote:
+                local = placeholder + '.zarr'
+                fs.get(zpath, local)
+            imgs = np.array(xr.open_zarr(local).to_array())
+            splitpath = path.split('/')
+            i = splitpath[-3]
+            j = splitpath[-2]
         else:
-            imgs = np.array([cv2.imread(path, cv2.IMREAD_GRAYSCALE) for path in imgpath])
+            splitpath = path.split("/")
+            cy = splitpath[-3]
+            splitpath = splitpath[-1].split('_')
+            ch = int(splitpath[4])
+            j  = int(splitpath[1])
+            i  = int(splitpath[0])
+            # only get images 
+            pattern = "\/" + str(i) + "_" + str(j) + "_" + zstack + ".*\.png"
+            imgpath = [p for p in pngpaths if re.search(pattern, p)]
+            imgpath = natsorted(imgpath)
+            print(str(len(imgpath)) + " images in this (i,j)")
+            # preload each image
+            if root_remote:
+                imgs = np.array([imread_gcsfs(fs, path) for path in imgpath])
+            else:
+                imgs = np.array([cv2.imread(path, cv2.IMREAD_GRAYSCALE) for path in imgpath])
 
         # get the mask
         if root_remote:
-            fs.get(path, placeholder)
-            nppath = placeholder
+            fs.get(path, placeholder + '_seg.npy')
+            nppath = placeholder + '_seg.npy'
         else:
             nppath = path
         reading = np.load(nppath, allow_pickle=True).item()
@@ -140,26 +162,35 @@ def run_analysis(start_idx, end_idx, n_ch, zstack, expansion, root_dir, exp_id, 
             coord = [x, y]
             row = row + coord
             # get mean brightness
-            brightness = np.zeros(len(imgpath))
+            
             # for each image find the avg brightness around that cell
-            for m, im in enumerate(imgs):
-                avg = np.mean(im[cell_mask])
-                brightness[m]   = avg
+            if is_zarr:
+                # 2D array w/ avg for each cycle, channel
+                cell_mask
+                avg = np.mean(imgs[0,:,:,:,:], axis=2)
+                avg = np.mean(avg, axis=2)
+                # reshape into list
+                
+            else:
+                brightness = np.zeros(n_ch * (end_idx - start_idx + 1))
+                for m, im in enumerate(imgs):
+                    avg = np.mean(im[cell_mask])
+                    brightness[m]   = avg
             # write the row
-            sz = [str(np.sum(cell_mask)), str(np.sum(masks==(l+1)))]
-            brightness = [str(b) for b in brightness]
-            row = row + sz + brightness
-            df.loc[len(df.index)] = row
-        # append to csv
-        print("writing")
-        df.to_csv(out_path, mode='a')
-        # delete .npy if remote
-        if root_remote:
-            os.remove(placeholder)
-    # move the csv to remote
-    if out_remote:
-        fs.put(out_placeholder, out)
-        os.remove(out_placeholder)
+    #         sz = [str(np.sum(cell_mask)), str(np.sum(masks==(l+1)))]
+    #         brightness = [str(b) for b in brightness]
+    #         row = row + sz + brightness
+    #         df.loc[len(df.index)] = row
+    #     # append to csv
+    #     print("writing")
+    #     df.to_csv(out_path, mode='a')
+    #     # delete .npy if remote
+    #     if root_remote:
+    #         os.remove(placeholder + '_seg.npy')
+    # # move the csv to remote
+    # if out_remote:
+    #     fs.put(out_placeholder, out)
+    #     os.remove(out_placeholder)
 
 
 def imread_gcsfs(fs,file_path):

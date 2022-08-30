@@ -83,7 +83,7 @@ def run_seg(is_zarr, root_dir, exp_id, channel, zstack, cpmodel, channels, key, 
                 local = placeholder + 'zarr'
                 fs.get(impath, local)
             im = xr.open_zarr(local).to_array()
-            # get first channel, z
+            # get first cycle, first channel
             im = im[0, 0, 0, :, :]
         else:
             if root_remote:
@@ -112,7 +112,7 @@ def run_seg(is_zarr, root_dir, exp_id, channel, zstack, cpmodel, channels, key, 
             rpath = imgpaths[idx].rsplit(".", 1)[0] + "_seg.npy"
             fs.put(savepath, rpath)
             os.remove(savepath)
-            
+
         if is_zarr and root_remote:
             os.remove(local)
     if model_remote:
