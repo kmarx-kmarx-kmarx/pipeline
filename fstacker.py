@@ -11,11 +11,13 @@ from skimage.morphology import disk
 from skimage.registration import phase_cross_correlation
 from skimage.transform import warp, AffineTransform
 import os
+import xarray as xr
+
 debugging = False
 
 def main():
-    
     CLI = False     # set to true for CLI, if false, the following constants are used:
+    save_zarr = True
     use_gpu = True  # use GPU accelerated focus stacking
     prefix = ""     # if index.csv DNE, use prefix, else keep empty
     key = '/home/prakashlab/Documents/fstack/codex-20220324-keys.json'
@@ -31,7 +33,7 @@ def main():
     shift_registration = True
     subtract_background = False
     use_color = False
-    imin = 0    # view positions
+    imin = 0    # view positionsc
     imax = 19
     jmin = 0
     jmax = 19
@@ -86,9 +88,11 @@ def main():
     stack_args.add_argument('--sth',   default=13,  type=int,   help='blending parameter')
     # misc
     parser.add_argument('--verbose', action='store_true', help='show information about running and settings')
+    parser.add_argument('--save_zarr', action='store_true', help='save to .zarr file instead of nested image folders')
     args = parser.parse_args()
 
     if not CLI:
+        args.save_zarr = save_zarr
         args.use_gpu = use_gpu
         args.key = key
         args.gcs_project = gcs_project
@@ -117,10 +121,10 @@ def main():
         args.sth   = sth
         args.verbose = verbose
     
-    perform_stack(colors, prefix, args.use_gpu, args.key, args.gcs_project, args.src, args.exp, args.cha, args.dst, args.typ, args.imin, args.imax, args.jmin, args.jmax, args.kmin, args.kmax, args.cmin, args.cmax, args.crop_start, args.crop_end, args.remove_background, args.subtract_background, args.invert_contrast, args.shift_registration, args.use_color, args.WSize, args.alpha, args.sth, args.verbose)
+    perform_stack(colors, prefix, args.save_zarr, args.use_gpu, args.key, args.gcs_project, args.src, args.exp, args.cha, args.dst, args.typ, args.imin, args.imax, args.jmin, args.jmax, args.kmin, args.kmax, args.cmin, args.cmax, args.crop_start, args.crop_end, args.remove_background, args.subtract_background, args.invert_contrast, args.shift_registration, args.use_color, args.WSize, args.alpha, args.sth, args.verbose)
     return
     
-def perform_stack(colors, prefix, use_gpu, key, gcs_project, src, exp, cha, dst, typ, imin, imax, jmin, jmax, kmin, kmax, cmin, cmax, crop_start, crop_end, remove_background, subtract_background, invert_contrast, shift_registration, use_color, WSize, alpha, sth, verbose):
+def perform_stack(colors, prefix, save_zarr, use_gpu, key, gcs_project, src, exp, cha, dst, typ, imin, imax, jmin, jmax, kmin, kmax, cmin, cmax, crop_start, crop_end, remove_background, subtract_background, invert_contrast, shift_registration, use_color, WSize, alpha, sth, verbose):
     a = crop_end - crop_start
     # Initialize arguments
     error = 0
@@ -180,8 +184,12 @@ def perform_stack(colors, prefix, use_gpu, key, gcs_project, src, exp, cha, dst,
     # pre-allocate arrays
     if use_color:
         I_zs = np.zeros((kmax-kmin + 1,a,a,3))
+        if save_zarr:
+            I_ij = np.zeros((a,a,len(cha),cmax - cmin + 1, 3)) # x, y, channel, cycle, color
     else:
         I_zs = np.zeros((kmax-kmin + 1,a,a))
+        if save_zarr:
+            I_ij = np.zeros((a,a,len(cha),cmax - cmin + 1)) # x, y, channel, cycle
     # perform fstack for each experiment and for each channel and for each i,j
     for exp_i in exp:
         # load index.csv for each top-level experiment index
@@ -210,8 +218,11 @@ def perform_stack(colors, prefix, use_gpu, key, gcs_project, src, exp, cha, dst,
                 loc = [a.split('/')[-1] for a in os.listdir(src  + exp_i) if a.split('/')[-1][0:len(prefix)] == prefix ]
             
         for i, j in product(range(imin, imax+1), range(jmin, jmax+1)):
+            # create a zarr for each i, j
             if debugging and (i > imin + 2 or j > jmin + 2):
                 break
+            if save_zarr:
+                dest = dst + "/" + exp_i + "/" + str(i) + "/" + str(j)
             for c in range(cmin, cmax+1):
                 if c >= 1:
                     kmin = 0
@@ -302,19 +313,40 @@ def perform_stack(colors, prefix, use_gpu, key, gcs_project, src, exp, cha, dst,
                             I = 255 - I
                     
                     # save images 
-                    fname =  str(i) + '_' + str(j) + '_f_' + channel + '.png'
-                    savepath = dst + exp_i + '/' + id + '/0/'
-                    print(savepath+fname)
-                    if dst[0:5] == 'gs://':
-                        cv2.imwrite(fname, I)
-                        fs.put(fname, savepath+fname)
-                        os.remove(fname)
+                    if save_zarr:
+                        if use_color:
+                            I_ij[:,:, l, c, :] = I
+                        else:
+                            I_ij[:,:, l, c] = I
                     else:
-                        try:
-                            os.makedirs(savepath)
-                        except:
-                            pass
-                        cv2.imwrite(savepath+fname, I)
+                        fname = str(l) + '_' + channel + '.png'
+                        savepath = dst + '/' + exp_i + '/' + str(i) + '/' + str(j) + '/' 
+                        if dst[0:5] == 'gs://':
+                            cv2.imwrite(fname, I)
+                            fs.put(fname, savepath+fname)
+                            os.remove(fname)
+                        else:
+                            os.makedirs(savepath, exist_ok=True)
+                            cv2.imwrite(savepath+fname, I)
+                    
+            # write I_ij to zarr
+            if save_zarr:
+                os.makedirs(dest, exist_ok=True)
+                data = xr.DataArray(I_ij,dims=['x','y','c','t'])
+                data = data.transpose('t', 'c', 'x', 'y')
+                data = (data).astype('uint8')
+                ds = xr.Dataset({'images':data})
+                dest += '/'+ exp_i + ".zarr"
+                ds.to_zarr(dest, mode='w')
+                print("zarr'd")
+
+            # move the zarr to remote
+            if save_zarr and dst[0:5] == 'gs://':
+                fs.put(dest, dst+'/'+exp_i + '/' + str(i) + '/' + str(j) + '/' + exp_i + ".zarr")
+                os.remove(dest)
+            
+    
+
 
 
 def imread_gcsfs(fs,file_path):
