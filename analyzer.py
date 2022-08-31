@@ -55,7 +55,7 @@ def run_analysis(is_zarr, start_idx, end_idx, n_ch, zstack, expansion, root_dir,
         allpaths = [p for p in glob.iglob(path, recursive=True)]
     # remove duplicates
     allpaths = list(dict.fromkeys(allpaths))
-    allpaths.sort()
+    allpaths = natsorted(allpaths)
     npypaths = np.array(allpaths)
     # only the first cycle is segmented - nothing more to do
 
@@ -72,7 +72,7 @@ def run_analysis(is_zarr, start_idx, end_idx, n_ch, zstack, expansion, root_dir,
         allpaths = [p for p in glob.iglob(path, recursive=True)]
     # remove duplicates
     allpaths = list(dict.fromkeys(allpaths))
-    allpaths.sort()
+    allpaths = natsorted(allpaths)
     allpaths = np.array(allpaths)
     if is_zarr:
         print(str(n_ch * len(allpaths) * (end_idx - start_idx + 1)) + " images to analyze")
