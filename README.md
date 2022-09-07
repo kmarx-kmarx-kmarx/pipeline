@@ -1,5 +1,7 @@
 # CODEX Pipeline
 
+todo: explain the `use_all` flag
+
 This repository contains everything necessary to process image data, from focus stacking to basic analysis.
 
 Future revisions will include .zarr support (more compression options, faster read/writes).

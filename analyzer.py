@@ -25,7 +25,7 @@ def main():
     channel =  "Fluorescence_405_nm_Ex" # use only this channel as masks
     key = '/home/prakashlab/Documents/fstack/codex-20220324-keys.json'
     gcs_project = 'soe-octopi'
-    out = "/media/prakashlab/T7/" + exp_id + "/meanbright_" + str(expansion) + ".csv"
+    out = "/media/prakashlab/T7/" + exp_id + "/zmeanbright_" + str(expansion) + ".csv"
     
     run_analysis(is_zarr, start_idx, end_idx, n_ch, zstack, expansion, root_dir, exp_id, channel, key, gcs_project, out)
 
@@ -162,35 +162,34 @@ def run_analysis(is_zarr, start_idx, end_idx, n_ch, zstack, expansion, root_dir,
             coord = [x, y]
             row = row + coord
             # get mean brightness
-            
+            brightness = np.zeros(n_ch * (end_idx - start_idx + 1))
             # for each image find the avg brightness around that cell
             if is_zarr:
                 # 2D array w/ avg for each cycle, channel
-                cell_mask
-                avg = np.mean(imgs[0,:,:,:,:], axis=2)
-                avg = np.mean(avg, axis=2)
-                # reshape into list
-                
+                print(":(")
+                # avg = np.mean(imgs[0,:,:,:,:], axis=2)
+                # avg = np.mean(avg, axis=2)
+                # # reshape into list - currently is avg[cycle, channel], want cy[n]_ch[0..m]
+                # brightness = np.ravel(avg)
             else:
-                brightness = np.zeros(n_ch * (end_idx - start_idx + 1))
                 for m, im in enumerate(imgs):
                     avg = np.mean(im[cell_mask])
                     brightness[m]   = avg
             # write the row
-    #         sz = [str(np.sum(cell_mask)), str(np.sum(masks==(l+1)))]
-    #         brightness = [str(b) for b in brightness]
-    #         row = row + sz + brightness
-    #         df.loc[len(df.index)] = row
-    #     # append to csv
-    #     print("writing")
-    #     df.to_csv(out_path, mode='a')
-    #     # delete .npy if remote
-    #     if root_remote:
-    #         os.remove(placeholder + '_seg.npy')
-    # # move the csv to remote
-    # if out_remote:
-    #     fs.put(out_placeholder, out)
-    #     os.remove(out_placeholder)
+            sz = [str(np.sum(cell_mask)), str(np.sum(masks==(l+1)))]
+            brightness = [str(b) for b in brightness]
+            row = row + sz + brightness
+            df.loc[len(df.index)] = row
+        # append to csv
+        print("writing")
+        df.to_csv(out_path, mode='a')
+        # delete .npy if remote
+        if root_remote:
+            os.remove(placeholder + '_seg.npy')
+    # move the csv to remote
+    if out_remote:
+        fs.put(out_placeholder, out)
+        os.remove(out_placeholder)
 
 
 def imread_gcsfs(fs,file_path):
