@@ -10,18 +10,19 @@ import time
 
 def main():
     # root_dir needs a trailing slash (i.e. /root/dir/)
-    root_dir = "/media/prakashlab/T7/malaria-tanzina-2021/dpc/"#'gs://octopi-codex-data-processing/' #"/home/prakashlab/Documents/kmarx/pipeline/tstflat/"# 'gs://octopi-codex-data-processing/TEST_1HDcVekx4mrtl0JztCXLn9xN6GOak4AU/'#
-    exp_id   = "Negative-Donor-Samples/"
-    channel =  "BF_LED_matrix_dpc" # only run segmentation on this channel
+    root_dir = "/home/prakashlab/Documents/kmarx/sickle_cell/SampleImages/"#'gs://octopi-codex-data-processing/' #"/home/prakashlab/Documents/kmarx/pipeline/tstflat/"# 'gs://octopi-codex-data-processing/TEST_1HDcVekx4mrtl0JztCXLn9xN6GOak4AU/'#
+    exp_id   = ["AA/", "AS/", "SS/"]
+    channel =  "_DPC" # only run segmentation on this channel
     zstack  = 'f' # select which z to run segmentation on. set to 'f' to select the focus-stacked
-    cpmodel = "/home/prakashlab/Documents/kmarx/pipeline/cp_dpc_new"#"/home/prakashlab/Documents/kmarx/pipeline/cpmodel_20220827"#"/home/octopi-codex/Documents/pipeline_test/subsets/20220811_10x_zstacks/models/cellpose_residual_on_style_on_concatenation_off_20220811_10x_zstacks_2022_09_18_11_18_32.611351"
+    cpmodel = "/home/prakashlab/Documents/kmarx/sickle_cell/pipeline/cp_dpc_new"#"/home/prakashlab/Documents/kmarx/pipeline/cpmodel_20220827"#"/home/octopi-codex/Documents/pipeline_test/subsets/20220811_10x_zstacks/models/cellpose_residual_on_style_on_concatenation_off_20220811_10x_zstacks_2022_09_18_11_18_32.611351"
     channels = [0,0] # grayscale only
     key = "/home/prakashlab/Documents/fstack/codex-20220324-keys.json"#'/home/prakashlab/Documents/kmarx/malaria_deepzoom/deepzoom uganda 2022/uganda-2022-viewing-keys.json'
     use_gpu = True
     segment_all = True
     gcs_project = 'soe-octopi'
     t0 = time.time()
-    run_seg(root_dir, exp_id, channel, zstack, cpmodel, channels, key, use_gpu, segment_all, gcs_project)
+    for ids in exp_id:
+        run_seg(root_dir, ids, channel, zstack, cpmodel, channels, key, use_gpu, segment_all, gcs_project)
     t1 = time.time()
     print(t1-t0)
 
@@ -45,12 +46,12 @@ def run_seg(root_dir, exp_id, channel, zstack, cpmodel, channels, key, use_gpu, 
 
     print("Reading image paths")
     # filter - only look for specified channel, z, and cycle 0
-    path = root_dir + exp_id + "**/0/**_" + zstack + "_" + channel + '.png'
+    path = root_dir + exp_id + "**" + channel + '.TIF'
     print(path)
     if root_remote:
         allpaths = [p for p in fs.glob(path, recursive=True)]
     else:
-        allpaths = [p for p in glob.iglob(path, recursive=True)]
+        allpaths = list(glob.glob(path, recursive=True))
     # remove duplicates
     imgpaths = list(dict.fromkeys(allpaths))
     imgpaths = np.array(natsorted(imgpaths))
