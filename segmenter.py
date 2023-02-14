@@ -1,36 +1,45 @@
 import numpy as np
-from cellpose import models
-from cellpose import models, io
+from cellpose import models, utils
 import glob
 import os	
 import gcsfs
 import imageio
-from natsort import natsorted
-import time
+import cv2
+from dpc_overlay import generate_dpc
+import pandas as pd
+from tqdm import tqdm
+from tqdm.contrib.itertools import product
+import logging
+import json
 
 def main():
-    # root_dir needs a trailing slash (i.e. /root/dir/)
-    root_dir = "/home/prakashlab/Documents/kmarx/sickle_cell/SampleImages/"#'gs://octopi-codex-data-processing/' #"/home/prakashlab/Documents/kmarx/pipeline/tstflat/"# 'gs://octopi-codex-data-processing/TEST_1HDcVekx4mrtl0JztCXLn9xN6GOak4AU/'#
-    exp_id   = ["AA/", "AS/", "SS/"]
-    channel =  "_DPC" # only run segmentation on this channel
-    zstack  = 'f' # select which z to run segmentation on. set to 'f' to select the focus-stacked
-    cpmodel = "/home/prakashlab/Documents/kmarx/sickle_cell/pipeline/cp_dpc_new"#"/home/prakashlab/Documents/kmarx/pipeline/cpmodel_20220827"#"/home/octopi-codex/Documents/pipeline_test/subsets/20220811_10x_zstacks/models/cellpose_residual_on_style_on_concatenation_off_20220811_10x_zstacks_2022_09_18_11_18_32.611351"
-    channels = [0,0] # grayscale only
-    key = "/home/prakashlab/Documents/fstack/codex-20220324-keys.json"#'/home/prakashlab/Documents/kmarx/malaria_deepzoom/deepzoom uganda 2022/uganda-2022-viewing-keys.json'
+    logging.basicConfig(filename='example.log')
+    debug = False
+    root_dir = 'gs://octopi-tb-data/20221002'
+    dest_dir = 'gs://octopi-tb-data-processing/20230214'
+    exp_id   = ['SP1+_2022-10-02_20-10-50.529345', 'SP1-_2022-10-02_20-23-56.661506', 'SP2+_2022-10-02_20-41-41.247131', 'SP2-_2022-10-02_20-58-10.547699', 'SP3+_2022-10-02_21-13-35.929780', 'SP3-_2022-10-02_21-31-39.783478', 'SP4+_2022-10-02_21-47-12.117750', 'SP4-_2022-10-02_21-59-26.387251', 'SP5+_2022-10-02_22-16-53.962897', 'SP5-_2022-10-02_22-29-35.714940']
+    channel =  ""
+    cpmodel = "/home/prakashlab/Documents/kmarx/tb_segment/pipeline/segments/**/train/models/cellpose_residual_on_style_on_concatenation_off_train_2023_02_10_10_52_15.693300_epoch_4001"
+    channels = [1,3] # red and blue
+    key = '/home/prakashlab/Documents/kmarx/tb_key.json'
     use_gpu = True
-    segment_all = True
     gcs_project = 'soe-octopi'
-    t0 = time.time()
-    for ids in exp_id:
-        run_seg(root_dir, ids, channel, zstack, cpmodel, channels, key, use_gpu, segment_all, gcs_project)
-    t1 = time.time()
-    print(t1-t0)
+    correction_path = "/home/prakashlab/Documents/kmarx/tb_segment/pipeline/segments/correction"
+    center_crop = 400 # crop away this many pixels from each edge
+    dilation_sz = 2 # amount to dilate to merge adjacent cells
+    for ids in tqdm(exp_id):
+        run_seg(debug, root_dir, dest_dir, ids, channel, cpmodel, channels, key, use_gpu, gcs_project, correction_path, center_crop, dilation_sz)
 
-def run_seg(root_dir, exp_id, channel, zstack, cpmodel, channels, key, use_gpu, segment_all, gcs_project):
+
+def run_seg(debug, root_dir, dest_dir, exp_id, channel, cpmodel, channels, key, use_gpu, gcs_project, correction_path, center_crop, dilation_sz):
     # Load remote files if necessary
     root_remote = False
     if root_dir[0:5] == 'gs://':
         root_remote = True
+
+    dest_remote = False
+    if dest_dir[0:5] == 'gs://':
+        dest_remote = True
 
     model_remote = False
     if cpmodel[0:5] == 'gs://':
@@ -43,86 +52,157 @@ def run_seg(root_dir, exp_id, channel, zstack, cpmodel, channels, key, use_gpu, 
     if model_remote:
         fs.get(cpmodel, modelpath)
         cpmodel = modelpath
-
-    print("Reading image paths")
-    # filter - only look for specified channel, z, and cycle 0
-    path = root_dir + exp_id + "**" + channel + '.TIF'
-    print(path)
+    do_dpc = len(channel) == 0
+    # Load flatfield correction if necessary
+    flatfield_left = None
+    flatfield_right = None
+    flatfield_fluorescence = None
+    if do_dpc:
+        os.makedirs(correction_path, exist_ok=True)
+        # check if files already exist
+        if not os.path.exists(os.path.join(correction_path, "flatfield_left.npy")):
+            if root_remote:
+                fs.get(os.path.join(root_dir, "illumination correction", "left", "flatfield.npy"), os.path.join(correction_path, "flatfield_left.npy"))
+            else:
+                print("Left missing")
+                raise FileNotFoundError
+        if not os.path.exists(os.path.join(correction_path, "flatfield_right.npy")):
+            if root_remote:
+                fs.get(os.path.join(root_dir, "illumination correction", "right", "flatfield.npy"), os.path.join(correction_path, "flatfield_right.npy"))
+            else:
+                print("Right missing")
+                raise FileNotFoundError
+        if not os.path.exists(os.path.join(correction_path, "flatfield_fluorescence.npy")):
+            if root_remote:
+                fs.get(os.path.join(root_dir, "illumination correction", "fluorescent", "flatfield.npy"), os.path.join(correction_path, "flatfield_fluorescence.npy"))
+            else:
+                print("fluorescent missing")
+                raise FileNotFoundError
+        flatfield_left = np.load(os.path.join(correction_path, "flatfield_left.npy"))
+        flatfield_right = np.load(os.path.join(correction_path, "flatfield_right.npy"))
+        flatfield_fluorescence = np.load(os.path.join(correction_path, "flatfield_fluorescence.npy"))
+    # load acquisition params
     if root_remote:
-        allpaths = [p for p in fs.glob(path, recursive=True)]
+        json_file = fs.cat(os.path.join(root_dir, exp_id, "acquisition parameters.json"))
+        acquisition_params = json.loads(json_file)
     else:
-        allpaths = list(glob.glob(path, recursive=True))
-    # remove duplicates
-    imgpaths = list(dict.fromkeys(allpaths))
-    imgpaths = np.array(natsorted(imgpaths))
-    if not segment_all:
-        ch0 = imgpaths[0].split('/')[-3]
-        ch1 = imgpaths[1].split('/')[-3]
-        segpaths = [path for path in imgpaths if ch0 in path]
-        segpaths_alt = [path for path in imgpaths if ch1 in path]
-    else:
-        segpaths = imgpaths
-    print(str(len(segpaths)) + " images to segment")
+        acquisition_params = json.loads(os.path.join(root_dir, exp_id, "acquisition parameters.json"))
 
-    print("Starting cellpose")
+    print(str(acquisition_params['Nx'] * acquisition_params['Ny'] * acquisition_params['Nz']) + " images to segment")
+    xrng = range(acquisition_params['Nx'])
+    yrng = range(acquisition_params['Ny'])
+    zrng = range(acquisition_params['Nz'])
+    if debug:
+        xrng = min(xrng, 2)
+        yrng = min(yrng, 2)
+        zrng = min(zrng, 2)
     # start cellpose
     model = models.CellposeModel(gpu=use_gpu, pretrained_model=cpmodel)
-    print("Starting segmentation")
 
-    placeholder = "./placeholder.png"
-    dest = root_dir + exp_id + "segmentation/"
-    os.makedirs(dest, exist_ok=True)
-
+    savepath = os.path.join(dest_dir, exp_id)
+    if not dest_remote:
+        os.makedirs(savepath, exist_ok=True)
+    
+    # Create dataframes for number of cells in the view and the blob info
+    n_cell_df = pd.DataFrame(columns=['x_id', 'y_id', 'z_id', "n_cell"])
+    blob_df = pd.DataFrame(columns=['x_id', 'y_id', 'z_id', "blob_x", "blob_y", "blob_w", "blob_h", "blob_x_center", "blob_y_center"])
     # segment one at a time - gpu bottleneck
-    for idx, impath in enumerate(segpaths):
-        print(str(idx) + ": " + impath)
-        if root_remote:
-            im = np.array(imread_gcsfs(fs, impath), dtype=np.uint8)
+    for x_id, y_id, z_id in product(xrng, yrng, zrng):
+        x_id = str(x_id)
+        y_id = str(y_id)
+        z_id = str(z_id)
+        if do_dpc:
+            try:
+                if root_remote:
+                    img_path = os.path.join(root_dir, exp_id, '0', f"{x_id}_{y_id}_{z_id}_BF_LED_matrix_left_half.bmp")
+                    im_left = np.array(imread_gcsfs(fs, img_path), dtype=float)
+                    img_path = img_path.replace("BF_LED_matrix_left_half", "BF_LED_matrix_right_half")
+                    im_right = np.array(imread_gcsfs(fs, img_path), dtype=float)
+                    img_path = img_path.replace("BF_LED_matrix_right_half", "Fluorescence_488_nm_Ex")
+                    im_flr = np.array(imread_gcsfs(fs, img_path), dtype=float)
+                else:
+                    img_path = os.path.join(root_dir, exp_id, '0', f"{x_id}_{y_id}_{z_id}_BF_LED_matrix_left_half.bmp")
+                    im_left = cv2.imread(img_path)
+                    img_path = img_path.replace("BF_LED_matrix_left_half", "BF_LED_matrix_right_half")
+                    im_right = cv2.imread(img_path)
+                    img_path = img_path.replace("BF_LED_matrix_right_half", "Fluorescence_488_nm_Ex")
+                    im_flr = cv2.imread(img_path)
+            except:
+                img_path = os.path.join(root_dir, exp_id, '0', f"{x_id}_{y_id}_{z_id}_BF_LED_matrix_left_half.bmp")
+                logging.warning(img_path)
+                img_path = img_path.replace("BF_LED_matrix_left_half", "BF_LED_matrix_right_half")
+                logging.warning(img_path)
+                img_path = img_path.replace("BF_LED_matrix_right_half", "Fluorescence_488_nm_Ex")
+                logging.warning(img_path)
+                continue
+            # do flatfield correction 
+            im_left = im_left / (255 * flatfield_left)
+            im_right = im_right / (255 * flatfield_right)
+            im_flr = im_flr /  flatfield_fluorescence
+            # generate dpc
+            im_dpc = generate_dpc(im_left, im_right)
+            im = np.stack((im_dpc,  np.zeros(im_dpc.shape), (im_flr).astype(np.uint8)), axis=2)
         else:
-            im = np.array(io.imread(impath), dtype=np.uint8)
+            img_path = os.path.join(root_dir, exp_id, 0, f"{x_id}_{y_id}_{z_id}_{channel}.bmp")
+            if root_remote:
+                im = np.array(imread_gcsfs(fs, impath), dtype=np.uint8)
+            else:
+                im = np.array(cv2.imread(impath), dtype=np.uint8)
         # normalize
         im = im - np.min(im)
         im = np.uint8(255 * np.array(im, dtype=np.float64)/float(np.max(im)))
         # run segmentation
         masks, flows, styles = model.eval(im, diameter=None, channels=channels)
-        # If we didn't get any cells, try again
-        if np.max(masks) == 0 and not segment_all:
-            impath = segpaths_alt[idx]
-            print("No cells found. Trying again with a different cycle")
-            print(str(idx) + ": " + impath)
-            if root_remote:
-                im = np.array(imread_gcsfs(fs, impath), dtype=np.uint8)
-            else:
-                im = np.array(io.imread(impath), dtype=np.uint8)
-            # normalize
-            im = im - np.min(im)
-            im = np.uint8(255 * np.array(im, dtype=np.float64)/float(np.max(im)))
-            # run segmentation
-            masks, flows, styles = model.eval(im, diameter=None, channels=channels)
-        elif np.max(masks) == 0 and segment_all:
-            print("No cells detected! Next view")
-            continue
-        diams = 0
-        if root_remote:
-            savepath = placeholder
-        else:
-            if segment_all:
-                savepath = dest + impath.split('/')[-3] + '/' + impath.split('/')[-2] + '/' 
-            else:
-                savepath = dest + "first" + '/' + impath.split('/')[-2] + '/' 
-            os.makedirs(savepath, exist_ok=True)
-            savepath = savepath + impath.split('/')[-1]
-        # save the data
-        io.masks_flows_to_seg(im, masks, flows, diams, savepath, channels)
+        # crop the outside - get rid of edge effects
+        masks = masks[center_crop:-center_crop, center_crop:-center_crop]
+        # get number of cells
+        n_cells = np.max(masks)
+        n_cell_df.loc[len(n_cell_df)] = [x_id, y_id, z_id, n_cells]
+        # make binary mask with outlines
+        outlines = masks * utils.masks_to_outlines(masks)
+        bin_mask = (masks  > 0) * 1.0
+        outlines = (outlines  > 0) * 1.0
+        bin_mask = (bin_mask * (1.0 - outlines) * 255).astype(np.uint8)
+        flat_mask = np.zeros((masks.shape[0] + 2 * center_crop, masks.shape[1] + 2 * center_crop))
+        flat_mask[center_crop:-center_crop, center_crop:-center_crop] = bin_mask
+        # find blobs - dilate the flat mask to merge adjacet cells, then find contours
+        shape = cv2.MORPH_ELLIPSE
+        element = cv2.getStructuringElement(shape, (2 * dilation_sz + 1, 2 * dilation_sz + 1), (dilation_sz, dilation_sz))
+        dilate_mask = np.array(cv2.dilate(bin_mask, element))
+        contours, __ = cv2.findContours(dilate_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+        # for each contour, find center and bounding box
+        for cnt in contours:
+            x,y,w,h = cv2.boundingRect(cnt)
+            x = x + center_crop
+            y = y + center_crop
+            x_center = int(x + w/2)
+            y_center = int(y + h/2)
+            # add info to dataframe
+            blob_df.loc[len(blob_df)] = [x_id, y_id, z_id, x, y, w, h, x_center, y_center]
 
-        # move the .npy to remote if necessary
-        if root_remote:
-            # generate the local and remote path names
-            savepath = savepath.rsplit(".", 1)[0] + "_seg.npy"
-            rpath ="gs://" + imgpaths[idx].rsplit(".", 1)[0] + "_seg.npy"
-            fs.put(savepath, rpath)
-            print(rpath)
-            os.remove(savepath)
+        # save all data
+        impath = f"{savepath}/{x_id}_{y_id}_{z_id}_mask.bmp"
+        if dest_remote:
+            img_bytes = cv2.imencode('.bmp', flat_mask)[1]
+            with fs.open(impath, 'wb') as f:
+                f.write(img_bytes)
+        else:
+            cv2.imwrite(impath,flat_mask)
+        if debug and not dest_remote:
+            impath = f"{savepath}/{x_id}_{y_id}_{z_id}_image.bmp"
+            cv2.imwrite(impath,im)
+        
+    # save dataframes
+    blobpath = f"{savepath}/cell_group_locations.csv"
+    ncellpath = f"{savepath}/n_cells.csv"
+    if dest_remote:
+        with fs.open(blobpath, 'w') as f:
+            blob_df.to_csv(f)
+        with fs.open(ncellpath, 'w') as f:
+            n_cell_df.to_csv(f)
+    else:
+        blob_df.to_csv(blobpath)
+        n_cell_df.to_csv(ncellpath)
 
     if model_remote:
         os.remove(modelpath)
