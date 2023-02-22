@@ -16,11 +16,11 @@ def main():
     logging.basicConfig(filename='example.log')
     debug = False
     root_dir = 'gs://octopi-tb-data/20221002'
-    dest_dir = 'gs://octopi-tb-data-processing/20230214'
+    dest_dir = 'gs://octopi-tb-data-processing/20230217'
     exp_id   = ['SP1+_2022-10-02_20-10-50.529345', 'SP1-_2022-10-02_20-23-56.661506', 'SP2+_2022-10-02_20-41-41.247131', 'SP2-_2022-10-02_20-58-10.547699', 'SP3+_2022-10-02_21-13-35.929780', 'SP3-_2022-10-02_21-31-39.783478', 'SP4+_2022-10-02_21-47-12.117750', 'SP4-_2022-10-02_21-59-26.387251', 'SP5+_2022-10-02_22-16-53.962897', 'SP5-_2022-10-02_22-29-35.714940']
     channel =  ""
     cpmodel = "/home/prakashlab/Documents/kmarx/tb_segment/pipeline/segments/**/train/models/cellpose_residual_on_style_on_concatenation_off_train_2023_02_10_10_52_15.693300_epoch_4001"
-    channels = [1,3] # red and blue
+    channels = [3,1] # red and blue
     key = '/home/prakashlab/Documents/kmarx/tb_key.json'
     use_gpu = True
     gcs_project = 'soe-octopi'
@@ -89,8 +89,8 @@ def run_seg(debug, root_dir, dest_dir, exp_id, channel, cpmodel, channels, key, 
         acquisition_params = json.loads(os.path.join(root_dir, exp_id, "acquisition parameters.json"))
 
     print(str(acquisition_params['Nx'] * acquisition_params['Ny'] * acquisition_params['Nz']) + " images to segment")
-    xrng = range(acquisition_params['Nx'])
-    yrng = range(acquisition_params['Ny'])
+    xrng = range(acquisition_params['Ny']) # note - ny and nx should be flipped
+    yrng = range(acquisition_params['Nx'])
     zrng = range(acquisition_params['Nz'])
     if debug:
         xrng = min(xrng, 2)
@@ -148,9 +148,6 @@ def run_seg(debug, root_dir, dest_dir, exp_id, channel, cpmodel, channels, key, 
                 im = np.array(imread_gcsfs(fs, impath), dtype=np.uint8)
             else:
                 im = np.array(cv2.imread(impath), dtype=np.uint8)
-        # normalize
-        im = im - np.min(im)
-        im = np.uint8(255 * np.array(im, dtype=np.float64)/float(np.max(im)))
         # run segmentation
         masks, flows, styles = model.eval(im, diameter=None, channels=channels)
         # crop the outside - get rid of edge effects
