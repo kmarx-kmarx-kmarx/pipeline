@@ -11,6 +11,12 @@ from tqdm.contrib.itertools import product
 import logging
 import json
 
+'''
+This file reads fluorescence images ("Fluorescence_488_nm_Ex.bmp" suffix) from a folder and
+saves binary masks for each view and cell locations and bounding boxes for each cell
+detected in each view. 
+'''
+
 def main():
     logging.basicConfig(filename='example.log')
     debug = False
