@@ -98,12 +98,12 @@ def run_seg(debug, root_dir, dest_dir, exp_id, cpmodel, channels, key, use_gpu, 
         x_id = str(x_id)
         y_id = str(y_id)
         z_id = str(z_id)
-        impath = os.path.join(root_dir, exp_id, 0, f"{x_id}_{y_id}_{z_id}_Fluorescence_488_nm_Ex.bmp")
+        impath = os.path.join(root_dir, exp_id, '0', f"{x_id}_{y_id}_{z_id}_Fluorescence_405_nm_Ex.bmp")
         if root_remote:
             im = np.array(imread_gcsfs(fs, impath), dtype=np.uint8)
         else:
             im = np.array(cv2.imread(impath), dtype=np.uint8)
-        im_flr = im_flr /  flatfield_fluorescence
+        im_flr = im /  flatfield_fluorescence
         im_full = np.stack((np.zeros(im_flr.shape),  np.zeros(im_flr.shape), im_flr), axis=2)
         # crop the outside - get rid of edge effects
         im = np.zeros(im_full.shape)
