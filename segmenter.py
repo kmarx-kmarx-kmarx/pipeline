@@ -20,15 +20,15 @@ detected in each view.
 def main():
     logging.basicConfig(filename='example.log')
     debug = False
-    root_dir = 'path/or/bucket/to/data'
-    dest_dir = 'path/or/bucket/to/save'
+    root_dir = 'gs://octopi-tb-data/20221002'
+    dest_dir = 'gs://octopi-tb-data-processing/20221002_masks'
     exp_id   = ['experiment_id_1', 'experiment_id_2']
     cpmodel = "cellpose_tb_model"
     channels = [3,0] # red only
-    key = ''
+    key = '/home/prakashlab/Documents/kmarx/tb_key.json'
     use_gpu = True
-    gcs_project = ''
-    correction_path = "illumination correction"
+    gcs_project = 'soe-octopi'
+    correction_path = "illumination correction tb"
     center_crop = 400 # crop away this many pixels from each edge
     dilation_sz = -1 # amount to dilate to merge adjacent cells, set negative to disable
     run_seg(debug, root_dir, dest_dir, exp_id, cpmodel, channels, key, use_gpu, gcs_project, correction_path, center_crop, dilation_sz)
@@ -129,13 +129,12 @@ def run_seg(debug, root_dir, dest_dir, exp_ids, cpmodel, channels, key, use_gpu,
                 shape = cv2.MORPH_ELLIPSE
                 element = cv2.getStructuringElement(shape, (2 * dilation_sz + 1, 2 * dilation_sz + 1), (dilation_sz, dilation_sz))
                 bin_mask = np.array(cv2.dilate(bin_mask, element))
-            
             contours, __ = cv2.findContours(bin_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
             # for each contour, find center and bounding box
             for cnt in contours:
                 x,y,w,h = cv2.boundingRect(cnt)
-                x = x + center_crop
-                y = y + center_crop
+                x = x
+                y = y
                 x_center = int(x + w/2)
                 y_center = int(y + h/2)
                 # add info to dataframe
