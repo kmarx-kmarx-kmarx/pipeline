@@ -4,7 +4,7 @@ import numpy as np
 import os
 import gcsfs
 import imageio
-from pipeline.dpc_overlay import generate_dpc
+from dpc_overlay import generate_dpc
 from tqdm import tqdm
 import pandas as pd
 import cv2
