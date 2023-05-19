@@ -85,6 +85,7 @@ def make_view(debug, root_dir, root_proc, dest_dir, key, gcs_project, correction
     else:
         exp_ids = os.listdir(root_proc)
 
+    exp_ids = exp_ids[5:]
     for id in tqdm(exp_ids):
         # get blob csv
         csv_path = os.path.join(root_proc, id, "cell_group_locations.csv")
@@ -199,21 +200,34 @@ def make_view(debug, root_dir, root_proc, dest_dir, key, gcs_project, correction
             w_rec, h_rec = (row['blob_w'], row['blob_h'])
             found_flag = False
             # print(f"target: {(w_rec, h_rec)}")
+            bboxes = []
             for cnt in contours:
                 _, _, w_blb, h_blb = cv2.boundingRect(cnt)
-                # print((w_blb, h_blb))
+                bboxes.append((w_blb, h_blb))
                 if w_blb == w_rec and h_blb == h_rec:
                     cv2.drawContours(m, [cnt], -1, 255, -1)
                     found_flag = True
                     break
                     
             if found_flag ==  False:
+                # check if there is an off by one error
+                for w_blb, h_blb in bboxes:
+                    if (np.abs(w_rec - w_blb) <= 1 and np.abs(h_rec-h_blb) <= 1) :
+                        cv2.drawContours(m, [cnt], -1, 255, -1)
+                        found_flag = True
+                        break
+            
+            if found_flag == False:
                 m = mask[ymin:ymax, xmin:xmax]
                 cv2.imwrite("bad_image_dpc.png", i_dpc)
                 cv2.imwrite("bad_image_flr.png", i_flr)
                 cv2.imwrite("bad_image_mask.png", m)
+                a = [cv2.boundingRect(cnt) for cnt in contours]
+                print(a)
+                print((w_rec, h_rec))
                 raise UserWarning
             if np.sum(m) == 0 and np.sum(mask[ymin:ymax, xmin:xmax])!= 0:
+                print(contours)
                 print(f"target: {(w_rec, h_rec)}")
                 raise UserWarning
             # if brightfields are below threshold, throw out the data
