@@ -10,13 +10,13 @@ import time
 
 def main():
     # root_dir needs a trailing slash (i.e. /root/dir/)
-    root_dir = "/media/prakashlab/T7/malaria-tanzina-2021/dpc/"#'gs://octopi-codex-data-processing/' #"/home/prakashlab/Documents/kmarx/pipeline/tstflat/"# 'gs://octopi-codex-data-processing/TEST_1HDcVekx4mrtl0JztCXLn9xN6GOak4AU/'#
-    exp_id   = "Negative-Donor-Samples/"
-    channel =  "BF_LED_matrix_dpc" # only run segmentation on this channel
-    zstack  = 'f' # select which z to run segmentation on. set to 'f' to select the focus-stacked
-    cpmodel = "/home/prakashlab/Documents/kmarx/pipeline/cp_dpc_new"#"/home/prakashlab/Documents/kmarx/pipeline/cpmodel_20220827"#"/home/octopi-codex/Documents/pipeline_test/subsets/20220811_10x_zstacks/models/cellpose_residual_on_style_on_concatenation_off_20220811_10x_zstacks_2022_09_18_11_18_32.611351"
+    root_dir = "gs://octopi-sbc-segmentation/"#"/media/prakashlab/T7/malaria-tanzina-2021/dpc/"#'gs://octopi-codex-data-processing/' #"/home/prakashlab/Documents/kmarx/pipeline/tstflat/"# 'gs://octopi-codex-data-processing/TEST_1HDcVekx4mrtl0JztCXLn9xN6GOak4AU/'#
+    exp_id   = ['072622-D1-3_2022-07-26_17-50-42.852998', '072622-D10-8_2022-07-27_19-30-17.263167', '072622-D2-2_2022-07-26_18-23-3.141415', '072622-D3-3_2022-07-27_16-25-54.804829', '072622-D4-5_2022-07-27_16-52-13.083080', '072622-D5-6_2022-07-27_17-22-25.774065', '072622-D6-2_2022-07-27_17-53-26.531775', '072622-D7-5_2022-07-27_18-32-52.904302', '072622-D8-9_2022-07-27_18-51-3.318936', '072622-D9-10_2022-07-27_19-11-54.304831']
+    channel =  "DPC" # only run segmentation on this channel
+    zstack  = '0' # select which z to run segmentation on. set to 'f' to select the focus-stacked
+    cpmodel = "/home/prakashlab/Documents/kmarx/pipeline/cp_dpc_new"#"/home/prakashlab/Documents/kmarx/pipeline/cpmodel_20220827"###"/home/octopi-codex/Documents/pipeline_test/subsets/20220811_10x_zstacks/models/cellpose_residual_on_style_on_concatenation_off_20220811_10x_zstacks_2022_09_18_11_18_32.611351"
     channels = [0,0] # grayscale only
-    key = "/home/prakashlab/Documents/fstack/codex-20220324-keys.json"#'/home/prakashlab/Documents/kmarx/malaria_deepzoom/deepzoom uganda 2022/uganda-2022-viewing-keys.json'
+    key = "/home/prakashlab/Documents/kmarx/data-20220317-keys.json"#'/home/prakashlab/Documents/kmarx/malaria_deepzoom/deepzoom uganda 2022/uganda-2022-viewing-keys.json'
     use_gpu = True
     segment_all = True
     gcs_project = 'soe-octopi'
@@ -45,7 +45,7 @@ def run_seg(root_dir, exp_id, channel, zstack, cpmodel, channels, key, use_gpu, 
 
     print("Reading image paths")
     # filter - only look for specified channel, z, and cycle 0
-    path = root_dir + exp_id + "**/0/**_" + zstack + "_" + channel + '.png'
+    path = root_dir + exp_id + "0/**_" + zstack + "_" + channel + '.bmp'
     print(path)
     if root_remote:
         allpaths = [p for p in fs.glob(path, recursive=True)]

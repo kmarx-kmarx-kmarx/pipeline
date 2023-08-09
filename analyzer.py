@@ -9,24 +9,23 @@ import os
 from natsort import natsorted
 
 def main():
-    # Cycle indices are 0-12, we can choose a subset of the cycles to analyze
-    cy_name = "cycle0_2022-08-23_20-15-33.401781" # choose cycle to use as mask
+    cy_name = "cycle0_2023-05-25_16-34-12.901302" # choose cycle to use as mask
     start_idx = 0 #2
-    end_idx   = 13 #11
+    end_idx   = 22 #11
     # 4 channels
     n_ch      = 4
     # How many pixels around the mask to expand
     expansion = 9   
     # root_dir needs a trailing slash (i.e. /root/dir/)
-    root_dir = "/media/prakashlab/T7/malaria-tanzina-2021/"#'gs://octopi-codex-data-processing/UUlABKZIWxiZP5UnJvx6z1CZMhtxx9tu/'#'gs://octopi-codex-data-processing/' #"/home/prakashlab/Documents/kmarx/pipeline/tstflat/"# 'gs://octopi-codex-data-processing/TEST_1HDcVekx4mrtl0JztCXLn9xN6GOak4AU/'#
-    exp_id   = "Negative-Donor-Samples/"
+    root_dir = 'gs://octopi-codex-data-processing/'#"/media/prakashlab/T7/malaria-tanzina-2021/"#'gs://octopi-codex-data-processing/UUlABKZIWxiZP5UnJvx6z1CZMhtxx9tu/'#'gs://octopi-codex-data-processing/' #"/home/prakashlab/Documents/kmarx/pipeline/tstflat/"# 'gs://octopi-codex-data-processing/TEST_1HDcVekx4mrtl0JztCXLn9xN6GOak4AU/'#
+    exp_id   = "20230525_20x_PBMC/"
     zstack  = 'f' # select which z to run segmentation on. set to 'f' to select the focus-stacked
     channel =  "Fluorescence_405_nm_Ex" # use only this channel as masks
-    key = '/home/prakashlab/Documents/fstack/codex-20220324-keys.json'
+    key = '/home/prakashlab/Documents/kmarx/soe-octopi-27a4691943f1.json'
     gcs_project = 'soe-octopi'
-    mask_union = True
-    out = "/media/prakashlab/T7/malaria-tanzina-2021/results/" 
-    csvname = exp_id + "4redone_meanbright_" + str(expansion) + ".csv"
+    mask_union = False
+    out = "results/" 
+    csvname = exp_id + "meanbright_" + str(expansion) + ".csv"
     
     run_analysis(cy_name, start_idx, end_idx, n_ch, zstack, expansion, root_dir, exp_id, channel, key, gcs_project, mask_union, out, csvname)
 
@@ -35,19 +34,19 @@ def run_analysis(cy_name, start_idx, end_idx, n_ch, zstack, expansion, root_dir,
     if root_dir[0:5] == 'gs://':
         root_remote = True
     out_remote = False
-    out_placeholder = "temp.csv"
+    out_placeholder = "result/"
     out_path = out
     if out[0:5] == 'gs://':
         out_remote = True
         out_path = out_placeholder
     if not out_remote:
-        os.makedirs(out_path, exist_ok=True)
+        os.makedirs(out_path  + exp_id, exist_ok=True)
     fs = None
     if root_remote or out_remote:
         fs = gcsfs.GCSFileSystem(project=gcs_project,token=key)
 
     print("Reading .npy paths")
-    path = root_dir + exp_id + 'segmentation/first' + "/0/**_" + zstack + "_" + channel + '_seg.npy'
+    path = root_dir + exp_id + cy_name + 'segmentation/first' + "/0/**_" + zstack + "_" + channel + '_seg.npy'
     print(path)
     if root_remote:
         allpaths = [p for p in fs.glob(path, recursive=True)]
@@ -56,7 +55,7 @@ def run_analysis(cy_name, start_idx, end_idx, n_ch, zstack, expansion, root_dir,
     # ensure successful read - if allpaths is empty, get masks elsewhere
     if len(allpaths) == 0:
         print("Read from other source:")
-        path = root_dir + exp_id + "**/0/**_" + zstack  + '**.npy' 
+        path = root_dir + exp_id + cy_name + "/0/**_" + zstack  + '**.npy' 
         print(path)
         if root_remote:
             allpaths = [p for p in fs.glob(path, recursive=True)]
@@ -84,13 +83,13 @@ def run_analysis(cy_name, start_idx, end_idx, n_ch, zstack, expansion, root_dir,
     allpaths = np.array(allpaths)
     # remove images out of cycle bounds
     all_cycles = natsorted(list(dict.fromkeys([i.split('/')[-3] for i in allpaths])))
-    target_cycles = all_cycles[start_idx:end_idx+1]
+    target_cycles = all_cycles#[start_idx:end_idx+1]
     pngpaths = [p for p in allpaths if p.split('/')[-3] in target_cycles]
     print(str(len(pngpaths)) + " images to analyze")
 
     # make a dataframe
     header = ['i', 'j', 'x_cell', 'y_cell', 'x_nuc', 'y_nuc', 'mask_x_cell', 'mask_y_cell', 'mask_x_nuc', 'mask_y_nuc', 'sz_msk', 'sz_nuc']
-    for cy in range(start_idx, end_idx + 1,1):
+    for cy in range(len(target_cycles)):
         for ch in range(0, n_ch):
             header.append(str(cy) + "_" + str(ch))
     print("header: " + str(len(header)))
@@ -212,8 +211,8 @@ def run_analysis(cy_name, start_idx, end_idx, n_ch, zstack, expansion, root_dir,
             os.remove(placeholder)
     # move the csv to remote
     if out_remote:
-        fs.put(out_placeholder + csvname, out + csvname)
-        os.remove(out_placeholder + csvname)
+        fs.put(out_path + csvname, out + csvname)
+        # os.remove(out_placeholder + csvname)
 
 
 def imread_gcsfs(fs,file_path):

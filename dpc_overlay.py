@@ -10,16 +10,16 @@ import os
 
 def main():
     # root_dir needs a trailing slash (i.e. /root/dir/)
-    root_dir = "/media/prakashlab/T7/malaria-tanzina-2021/"#'gs://octopi-codex-data-processing/' #"/home/prakashlab/Documents/kmarx/pipeline/tstflat/"# 'gs://octopi-codex-data-processing/TEST_1HDcVekx4mrtl0JztCXLn9xN6GOak4AU/'#
-    dest_dir = "gs://octopi-malaria-data-processing/malaria-tanzina-2021/"
-    exp_id   = "Negative-Donor-Samples/" # experiment ID - needs a trailing '/'
+    root_dir = "gs://octopi-malaria-tanzania-2021-data/"#/media/prakashlab/T7/malaria-tanzina-2021/"#'gs://octopi-codex-data-processing/' #"/home/prakashlab/Documents/kmarx/pipeline/tstflat/"# 'gs://octopi-codex-data-processing/TEST_1HDcVekx4mrtl0JztCXLn9xN6GOak4AU/'#
+    dest_dir = "/home/prakashlab/Documents/kmarx/16C/"
+    exp_id   = "U16C_2022-10-18_21-41-21.249946/" # experiment ID - needs a trailing '/'
     left_light = "BF_LED_matrix_left_half" # name of the left illumination
     right_light = "BF_LED_matrix_right_half" # set emppty to not do DPC
     fluorescence = "Fluorescence_405_nm_Ex"  # set empty to not do overlay
-    zstack  = 'f' # select which z to run segmentation on. set to 'f' to select the focus-stacked
+    zstack  = '0' # select which z to run segmentation on. set to 'f' to select the focus-stacked
     key = '/home/prakashlab/Documents/kmarx/data-20220317-keys.json'
     gcs_project = 'soe-octopi'
-    ftype = 'png'
+    ftype = 'bmp'
     do_dpc_overlay(root_dir, dest_dir, exp_id, left_light, right_light, fluorescence, zstack, key, gcs_project, ftype)
 
 def do_dpc_overlay(root_dir, dest_dir, exp_id, left_light, right_light, fluorescence, zstack, key, gcs_project, ftype):
@@ -39,7 +39,7 @@ def do_dpc_overlay(root_dir, dest_dir, exp_id, left_light, right_light, fluoresc
     if root_remote or dest_remote:
         fs = gcsfs.GCSFileSystem(project=gcs_project,token=key)
     
-    path = os.path.join(root_dir , exp_id , "**/0/**_" + zstack + "_" + left_light + '.' + ftype)
+    path = os.path.join(root_dir , exp_id , "0/**_" + zstack + "_" + left_light + '.' + ftype)
     print(path)
     if root_remote:
         allpaths = [p for p in fs.glob(path, recursive=True) if p.split('/')[-2] == '0']
@@ -59,6 +59,8 @@ def do_dpc_overlay(root_dir, dest_dir, exp_id, left_light, right_light, fluoresc
         flrpaths = [p.replace(left_light, fluorescence) for p in lftpaths]
     
     for idx in range(len(lftpaths)):
+        if idx > 10:
+            break
         print(lftpaths[idx])
         print(rhtpaths[idx])
         print(flrpaths[idx])

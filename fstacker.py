@@ -11,20 +11,22 @@ from skimage.morphology import disk
 from skimage.registration import phase_cross_correlation
 from skimage.transform import warp, AffineTransform
 import os
+import json
 debugging = False
 import time
+from tqdm import tqdm
 
 def main():
     
     CLI = False     # set to true for CLI, if false, the following constants are used:
     use_gpu = True  # use GPU accelerated focus stacking
-    prefix = "072622-D"     # if index.csv DNE, use prefix, else keep empty
-    key = '/home/prakashlab/Documents/kmarx/data-20220317-keys.json'
+    prefix = ""     # if index.csv DNE, use prefix, else keep empty
+    key = '/home/prakashlab/Documents/kmarx/soe-octopi-27a4691943f1.json'
     gcs_project = 'soe-octopi'
-    src = "gs://octopi-malaria-tanzania-2021-data/"
-    dst = "/media/prakashlab/T7/malaria-tanzina-2021/Negative-Donor-Samples/" #"./test"
-    exp = ['Negative-Donor-Samples/']
-    cha = ['BF_LED_matrix_full', 'BF_LED_matrix_left_half', 'BF_LED_matrix_low_NA', 'BF_LED_matrix_right_half', 'Fluorescence_405_nm_Ex']#["Fluorescence_638_nm_Ex", "Fluorescence_561_nm_Ex", "Fluorescence_488_nm_Ex", "Fluorescence_405_nm_Ex"]
+    src = "gs://octopi-codex-data/"
+    dst = "gs://octopi-codex-data-processing/" #"./test"
+    exp = ['20230525_20x_PBMC/']
+    cha = ["Fluorescence_405_nm_Ex", "Fluorescence_638_nm_Ex", "Fluorescence_561_nm_Ex", "Fluorescence_488_nm_Ex"] # ['BF_LED_matrix_full', 'BF_LED_matrix_left_half', 'BF_LED_matrix_low_NA', 'BF_LED_matrix_right_half', 'Fluorescence_405_nm_Ex']
     typ = "bmp"
     colors = {'0':[255,255,255],'1':[255,200,0],'2':[30,200,30],'3':[0,0,255]} # BRG
     remove_background = False
@@ -32,16 +34,9 @@ def main():
     shift_registration = True
     subtract_background = False
     use_color = False
-    imin = 0    # view positions
-    imax = 9
-    jmin = 0
-    jmax = 9
-    kmin = 0 
-    kmax = 0
-    cmin = 1
-    cmax = 10
-    crop_start = 0 # crop settings
-    crop_end = 3000
+    crop_start = 250 # crop settings
+    crop_end = 3000-250
+    full_size = 3000
     WSize = 9     # Focus stacking params
     alpha = 0.2
     sth = 13
@@ -61,14 +56,6 @@ def main():
     img_args.add_argument('--exp', default=[], type=str, nargs='+', help='experiment ID (one or more)')
     img_args.add_argument('--cha', default=[], type=str, nargs='+', help='channel name (e.g. Fluorescence_488_nm_Ex, one or more)')
     img_args.add_argument('--dst', default=[], type=str, help='destination directory or GCSFS path to save images')
-    img_args.add_argument('--imin', default=[], type=int, help='minimum i value')
-    img_args.add_argument('--imax', default=[], type=int, help='maximum i value')
-    img_args.add_argument('--jmin', default=[], type=int, help='minimum j value')
-    img_args.add_argument('--jmax', default=[], type=int, help='maximum j value')
-    img_args.add_argument('--kmax', default=[], type=int, help='maximum k value')
-    img_args.add_argument('--kmin', default=[], type=int, help='minimum k value')
-    img_args.add_argument('--cmax', default=[], type=int, help='maximum cycle value')
-    img_args.add_argument('--cmin', default=[], type=int, help='minimum cycle value')
     img_args.add_argument('--crop_start', default=[], type=int, help='position to start cropping the image')
     img_args.add_argument('--crop_end', default=[], type=int, help='position to stop cropping the image')
 
@@ -98,14 +85,6 @@ def main():
         args.cha = cha
         args.dst = dst
         args.typ = typ
-        args.imin = imin
-        args.imax = imax
-        args.jmin = jmin
-        args.jmax = jmax
-        args.kmin = kmin
-        args.kmax = kmax
-        args.cmin = cmin
-        args.cmax = cmax
         args.crop_start = crop_start
         args.crop_end   = crop_end
         args.remove_background = remove_background
@@ -118,10 +97,10 @@ def main():
         args.sth   = sth
         args.verbose = verbose
     
-    perform_stack(colors, prefix, args.use_gpu, args.key, args.gcs_project, args.src, args.exp, args.cha, args.dst, args.typ, args.imin, args.imax, args.jmin, args.jmax, args.kmin, args.kmax, args.cmin, args.cmax, args.crop_start, args.crop_end, args.remove_background, args.subtract_background, args.invert_contrast, args.shift_registration, args.use_color, args.WSize, args.alpha, args.sth, args.verbose)
+    perform_stack(colors, prefix, full_size, args.use_gpu, args.key, args.gcs_project, args.src, args.exp, args.cha, args.dst, args.typ, args.crop_start, args.crop_end, args.remove_background, args.subtract_background, args.invert_contrast, args.shift_registration, args.use_color, args.WSize, args.alpha, args.sth, args.verbose)
     return
     
-def perform_stack(colors, prefix, use_gpu, key, gcs_project, src, exp, cha, dst, typ, imin, imax, jmin, jmax, kmin, kmax, cmin, cmax, crop_start, crop_end, remove_background, subtract_background, invert_contrast, shift_registration, use_color, WSize, alpha, sth, verbose):
+def perform_stack(colors, prefix, full_size, use_gpu, key, gcs_project, src, exp, cha, dst, typ, crop_start, crop_end, remove_background, subtract_background, invert_contrast, shift_registration, use_color, WSize, alpha, sth, verbose):
     os.makedirs(dst, exist_ok = True)
     t0 = time.time()
     a = crop_end - crop_start
@@ -158,16 +137,20 @@ def perform_stack(colors, prefix, use_gpu, key, gcs_project, src, exp, cha, dst,
         if verbose:
             print("Using CPU")
     # check if remote
-    is_remote = False
+    root_remote = False
     if src[0:5] == 'gs://':
-        is_remote = True
+        root_remote = True
 
-    if is_remote and len(gcs_project) == 0:
-        print("Remote source but no project given")
+    dest_remote = False
+    if dst[0:5] == 'gs://':
+        dest_remote = True
+
+    if (root_remote or dest_remote) and len(gcs_project) == 0:
+        print("Remote source/destination but no project given")
         error += 1
 
-    if is_remote and len(key) == 0:
-        print("Remote source but no key ")
+    if (root_remote or dest_remote) and len(key) == 0:
+        print("Remote source/destination but no key ")
         error += 1
         
     # if there are any errors, stop
@@ -177,41 +160,31 @@ def perform_stack(colors, prefix, use_gpu, key, gcs_project, src, exp, cha, dst,
 
     # Initialize the remote filesystem
     fs = None
-    if is_remote:
+    if (root_remote or dest_remote):
         fs = gcsfs.GCSFileSystem(project=gcs_project,token=key)
 
-    # pre-allocate arrays
-    if use_color:
-        I_zs = np.zeros((kmax-kmin + 1,a,a,3))
-    else:
-        I_zs = np.zeros((kmax-kmin + 1,a,a))
-    # store total # of imgs
-    with open(dst + "log.txt", 'w') as f:
-        f.write(str(len(exp) * (imax - imin + 1) * (jmax - jmin + 1) * (kmax - kmin + 1) * (cmax - cmin + 1)))
-        f.write(' images\n')
-    # perform fstack for each experiment and for each channel and for each i,j
     for exp_i in exp:
         # load index.csv for each top-level experiment index
         df = None
         path = src + exp_i + 'index.csv'
-        try:
-            if is_remote:
+        if len(prefix) == 0:
+            if root_remote:
                 with fs.open(path, 'r' ) as f:
                     df = pd.read_csv(f)
             else:
                 with open( path, 'r' ) as f:
                     df = pd.read_csv(f)
-        except:
-            print(path + " cannot be opened")
-             # exit this loop
+        if debugging and len(df) > 4:
+            df = df.head(4)
+
         if verbose and len(prefix)==0:
             print(path + " opened")
             n = df.shape[0] # n is the number of cycles
             print("n cycles = " + str(n))
-            for i in range(n):
-                print(df.loc[i, 'Acquisition_ID'])
+            loc = [id for id in df.loc[:, 'Acquisition_ID']]
+
         if len(prefix) > 0:
-            if is_remote:
+            if root_remote:
                 if prefix == '*':
                     loc = [a.split('/')[-1] for a in fs.ls(src + exp_i)]
                 else:
@@ -221,25 +194,36 @@ def perform_stack(colors, prefix, use_gpu, key, gcs_project, src, exp, cha, dst,
                     loc = [a.split('/')[-1] for a in os.listdir(src  + exp_i)]
                 else:
                     loc = [a.split('/')[-1] for a in os.listdir(src  + exp_i) if a.split('/')[-1][0:len(prefix)] == prefix ]
-            print(loc)
+        for id in loc:
+            print(id)
+        
 
-        for i, j in product(range(imin, imax+1), range(jmin, jmax+1)):
-            if debugging and (i > imin + 2 or j > jmin + 2):
-                break
-            for c in range(cmin, cmax+1):
-                print('c = ' + str(c))
-                if debugging and c >= cmin+4:
-                    break
-                try:
-                    if len(prefix) > 0:
-                        id = loc[c - cmin]
-                    else:
-                        id = df.loc[c, 'Acquisition_ID']
-                except:
-                    break
-                    
+        # Load the acquisition params for first view
+        id = loc[0]
+        if root_remote:
+            json_file = fs.cat(os.path.join(src, exp_i, id, "acquisition parameters.json"))
+            acquisition_params = json.loads(json_file)
+        else:
+            acquisition_params = json.loads(os.path.join(src, exp_i, id, "acquisition parameters.json"))
+
+        if debugging:
+            acquisition_params['Ny'] = min(acquisition_params['Ny'], 2)
+            acquisition_params['Nx'] = min(acquisition_params['Nx'], 2)
+            acquisition_params['Nz'] = min(acquisition_params['Nz'], 2)
+
+        # pre-allocate arrays
+        if use_color:
+            I_zs = np.zeros((acquisition_params['Nz'],full_size,full_size,3))
+        else:
+            I_zs = np.zeros((acquisition_params['Nz'],full_size,full_size))
+        # store total # of imgs
+        print(f"{acquisition_params['Nz'] * acquisition_params['Ny'] * acquisition_params['Nx']} images in {id}")
+        print(f"{len(loc)*acquisition_params['Nz'] * acquisition_params['Ny'] * acquisition_params['Nx']} total images")
+       # perform fstack for each experiment and for each channel and for each i,j
+        for i, j in tqdm(product(range(acquisition_params['Ny']), range(acquisition_params['Nx'])), total=(acquisition_params['Nx']*acquisition_params['Ny'])):
+            for id in loc:
                 if verbose:
-                    print(id)  
+                    print(id)
                 for l in range(len(cha)):
                     if use_color:
                         color = colors[str(l)]
@@ -247,41 +231,34 @@ def perform_stack(colors, prefix, use_gpu, key, gcs_project, src, exp, cha, dst,
                             color = [0,0,0]
                     
                     channel = cha[l]
-                    if verbose:
-                        print(channel)
 
-                    for k in range(0, kmax+1-kmin):
-                        if verbose:
-                            print(k)
-                        filename = id + '/0/' + str(i) + '_' + str(j) + '_' + str(k+kmin) + '_' + channel + '.' + typ
+                    for k in range(acquisition_params['Nz']):
+                        filename = id + '/0/C4_' + str(i) + '_' + str(j) + '_' + str(k) + '_' + channel + '.' + typ
                         target = src + exp_i + filename
-                        print(target)
+                        if verbose:
+                            print(target)
                         try:
-                            if is_remote:
+                            if root_remote:
                                 I = imread_gcsfs(fs, target)
                             else:
                                 I = cv2.imread(target)
                         except:
                             # Log missing data
-                            with open(dst + "log.txt", 'a') as f:
-                                f.write(filename)
-                                f.write(str(time.time() - t0))
-                                f.write("\n")
+                            print(f"Missing data: {target}")
+                            raise UserWarning
 
-                            print("Data missing")
-                            I = np.zeros((a,a))
-                        # crop the image
-                        I = I[crop_start:crop_end,crop_start:crop_end]
                         if use_color:
                             I_zs[k,:,:,:] = I
                         else:
                             if len(I.shape)==3:
                                 I = np.squeeze(I[:,:,0])
                             I_zs[k,:,:] = I
-                    if (kmax+1-kmin) > 4:
-                        I = fstack_images(I_zs, list(range(kmin, kmax+1)), verbose=verbose, WSize=WSize, alpha=alpha, sth=sth)
+                    # if more than 4 images in zstack, focus-stack them
+                    if acquisition_params['Nz'] > 4:
+                        I = fstack_images(I_zs, list(range(acquisition_params['Nz'])), verbose=verbose, WSize=WSize, alpha=alpha, sth=sth)
+                    # otherwise, just pick the middle image
                     else:
-                        I = I_zs[int((kmax+1-kmin)/2),:,:]
+                        I = I_zs[int((acquisition_params['Nz'])/2),:,:]
 
                     if remove_background:
                         selem = disk(30) 
@@ -293,21 +270,27 @@ def perform_stack(colors, prefix, use_gpu, key, gcs_project, src, exp, cha, dst,
                     # registration across channels
                     if shift_registration:
                         # take the first channel of the first cycle as reference
-                        if c == cmin:
+                        if id == loc[0]:
                             if l == 0:
-                                I0 = I
+                                I0 = normalize(I)
+                                ref = f"{l}, {id}"
                         else:
                             if l == 0:
                                 # compare the first channel of later cycles to the first channel of the first cycle
+                                if verbose:
+                                    print(f"compare({ref}) to ({l}, {id})")
                                 try:
-                                    shift, __, __ = phase_cross_correlation(I, I0, upsample_factor = 5)
+                                    shift, b, c = phase_cross_correlation(I0, normalize(I), upsample_factor=8)
+                                    
+                                    if verbose:
+                                        print((shift, b, c))
                                 except:
                                     shift = [0,0]
                                     print("Phase cross correlation failed")
                                 if verbose:
                                     print(shift)
                                 # create the transform
-                                transform = AffineTransform(translation=(shift[1],shift[0]))
+                                transform = AffineTransform(translation=(shift[0],shift[1]))
                                 I = warp(I, transform)
                             else:
                                 # apply shift to all channels
@@ -321,24 +304,30 @@ def perform_stack(colors, prefix, use_gpu, key, gcs_project, src, exp, cha, dst,
                     else:
                         if invert_contrast:
                             I = 255 - I
-                    
+                    # crop image
+                    I = I[crop_start:crop_end,crop_start:crop_end]
                     # save images 
                     fname =  str(i) + '_' + str(j) + '_f_' + channel + '.png'
                     savepath = dst + exp_i + id + '/0/'
-                    print(savepath+fname)
-                    if dst[0:5] == 'gs://':
-                        cv2.imwrite(fname, I)
-                        fs.put(fname, savepath+fname)
-                        os.remove(fname)
+                    if verbose:
+                        print(savepath+fname)
+                    if dest_remote:
+                        img_bytes = cv2.imencode('.bmp', I)[1]
+                        with fs.open(savepath+fname, 'wb') as f:
+                            f.write(img_bytes)
                     else:
-                        try:
-                            os.makedirs(savepath)
-                        except:
-                            pass
+                        os.makedirs(savepath, exist_ok=True)
                         cv2.imwrite(savepath+fname, I)
-        with open(dst + "log.txt", 'a') as f:
-            f.write(str(time.time() - t0))
-            f.write("\n")
+
+def normalize(img):
+    '''
+    put image in range 0 to 255
+    '''
+    im = np.copy(img)
+    im = im - np.min(im)
+    im = im/np.max(im)
+    im = 255.0 * im
+    return im
 
 def imread_gcsfs(fs,file_path):
     '''
