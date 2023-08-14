@@ -19,14 +19,14 @@ from tqdm import tqdm
 def main():
     
     CLI = False     # set to true for CLI, if false, the following constants are used:
-    use_gpu = True  # use GPU accelerated focus stacking
+    use_gpu = False  # use GPU accelerated focus stacking
     prefix = ""     # if index.csv DNE, use prefix, else keep empty
-    key = '/home/prakashlab/Documents/kmarx/soe-octopi-27a4691943f1.json'
-    gcs_project = 'soe-octopi'
-    src = "gs://octopi-codex-data/"
-    dst = "gs://octopi-codex-data-processing/" #"./test"
-    exp = ['20230525_20x_PBMC/']
-    cha = ["Fluorescence_405_nm_Ex", "Fluorescence_638_nm_Ex", "Fluorescence_561_nm_Ex", "Fluorescence_488_nm_Ex"] # ['BF_LED_matrix_full', 'BF_LED_matrix_left_half', 'BF_LED_matrix_low_NA', 'BF_LED_matrix_right_half', 'Fluorescence_405_nm_Ex']
+    key = ''
+    gcs_project = ''
+    src = "/media/octopi/T7/20230718/"
+    dst = "/media/octopi/T7/20230718/processed_new/" #"./test"
+    exp = ['data/']
+    cha = ["Fluorescence_405_nm_Ex", "Fluorescence_638_nm_Ex", "Fluorescence_561_nm_Ex", "Fluorescence_488_nm_Ex"]
     typ = "bmp"
     colors = {'0':[255,255,255],'1':[255,200,0],'2':[30,200,30],'3':[0,0,255]} # BRG
     remove_background = False
@@ -34,8 +34,8 @@ def main():
     shift_registration = True
     subtract_background = False
     use_color = False
-    crop_start = 250 # crop settings
-    crop_end = 3000-250
+    crop_start = 150 # crop settings
+    crop_end = 2850
     full_size = 3000
     WSize = 9     # Focus stacking params
     alpha = 0.2
@@ -166,7 +166,7 @@ def perform_stack(colors, prefix, full_size, use_gpu, key, gcs_project, src, exp
     for exp_i in exp:
         # load index.csv for each top-level experiment index
         df = None
-        path = src + exp_i + 'index.csv'
+        path = src + 'index.csv'
         if len(prefix) == 0:
             if root_remote:
                 with fs.open(path, 'r' ) as f:
@@ -204,7 +204,8 @@ def perform_stack(colors, prefix, full_size, use_gpu, key, gcs_project, src, exp
             json_file = fs.cat(os.path.join(src, exp_i, id, "acquisition parameters.json"))
             acquisition_params = json.loads(json_file)
         else:
-            acquisition_params = json.loads(os.path.join(src, exp_i, id, "acquisition parameters.json"))
+            with open(os.path.join(src, exp_i, id, "acquisition parameters.json")) as f:
+                acquisition_params = json.load(f)
 
         if debugging:
             acquisition_params['Ny'] = min(acquisition_params['Ny'], 2)
@@ -220,8 +221,13 @@ def perform_stack(colors, prefix, full_size, use_gpu, key, gcs_project, src, exp
         print(f"{acquisition_params['Nz'] * acquisition_params['Ny'] * acquisition_params['Nx']} images in {id}")
         print(f"{len(loc)*acquisition_params['Nz'] * acquisition_params['Ny'] * acquisition_params['Nx']} total images")
        # perform fstack for each experiment and for each channel and for each i,j
-        for i, j in tqdm(product(range(acquisition_params['Ny']), range(acquisition_params['Nx'])), total=(acquisition_params['Nx']*acquisition_params['Ny'])):
+        #for i, j in tqdm(product(range(acquisition_params['Ny']), range(acquisition_params['Nx'])), total=(acquisition_params['Nx']*acquisition_params['Ny'])):
+        for i, j in tqdm(product(range(9, 11+1), range(9, 11+1)), total=(9)): # only look at middle 3
             for id in loc:
+                # id 5 is bad
+                if 'cycle5' in id:
+                    i = i-9
+                    j = j-9
                 if verbose:
                     print(id)
                 for l in range(len(cha)):
@@ -290,7 +296,7 @@ def perform_stack(colors, prefix, full_size, use_gpu, key, gcs_project, src, exp
                                 if verbose:
                                     print(shift)
                                 # create the transform
-                                transform = AffineTransform(translation=(shift[0],shift[1]))
+                                transform = AffineTransform(translation=(-shift[1],-shift[0]))
                                 I = warp(I, transform)
                             else:
                                 # apply shift to all channels
@@ -307,7 +313,13 @@ def perform_stack(colors, prefix, full_size, use_gpu, key, gcs_project, src, exp
                     # crop image
                     I = I[crop_start:crop_end,crop_start:crop_end]
                     # save images 
-                    fname =  str(i) + '_' + str(j) + '_f_' + channel + '.png'
+                    ii = i
+                    jj = j
+                    if i < 9:
+                        ii = i+9
+                    if j < 9:
+                        jj = j + 9
+                    fname =  str(ii) + '_' + str(jj) + '_f_' + channel + '.png'
                     savepath = dst + exp_i + id + '/0/'
                     if verbose:
                         print(savepath+fname)
